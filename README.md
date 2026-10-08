@@ -25,10 +25,11 @@ The project has three phases:
 6. [Configs and parameter versioning](#configs-and-parameter-versioning)
 7. [Physics and sensing models](#physics-and-sensing-models)
 8. [Phase 1: goalkeeper](#phase-1-goalkeeper)
-9. [Tests](#tests)
-10. [Reproducibility](#reproducibility)
-11. [Known problems and open items](#known-problems-and-open-items)
-12. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
+9. [MuJoCo simulation](#mujoco-simulation)
+10. [Tests](#tests)
+11. [Reproducibility](#reproducibility)
+12. [Known problems and open items](#known-problems-and-open-items)
+13. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
 
 ---
 
@@ -37,7 +38,8 @@ The project has three phases:
 | Milestone | Content | Status |
 |---|---|---|
 | M1 | Physics, servo, camera, tracker, config versioning, unit tests | Done |
-| M2 | Phase 1 env, asymmetric PPO, save-rate eval, viewer | Code done. 3-seed training in progress. Waits for review |
+| M2 | Phase 1 env, asymmetric PPO, save-rate eval, viewers | Done (3 seeds trained and evaluated). Waits for review |
+| — | MuJoCo backend for Phase 1 (board, puck, SO-101 arm), 3D viewer, sim-to-sim eval | Done |
 | M3 | Phase 2 env, band and deflection models, sysid with synthetic logs | Old code only. Not reviewed |
 | M4 | Opponent model, Phase 3 hierarchical env, rule-based baseline | Old code only. Has known bugs |
 | M5 | Selector training, ablations, ONNX export, latency benchmark | Old code only. Not reviewed |
@@ -55,6 +57,9 @@ Git history:
 | `36e0faa` | M2: goalkeeper env, asymmetric PPO, eval |
 | `69ce734` | M2: recovery task, grid eval |
 | `74d72f9` | Top-down goalkeeper viewer |
+| `88ebf85` | Load trained runs with either import path; how to run |
+| `6f285e8` | MuJoCo backend, 3D viewer (work in progress) |
+| (latest) | MuJoCo contact calibration, tests, final 3-seed results |
 
 ---
 
@@ -65,7 +70,7 @@ Requirements: Python 3.10 or later. The project was tested with Python 3.14
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 72 tests, about 6 s
+pytest -q            # 83 tests, about 8 s
 ```
 
 **Run all commands from the project root folder**, in the form
@@ -84,8 +89,11 @@ the policy class path that is stored in the model file, so a model trained with
 `slingpuck.*` imports also loads with `src.slingpuck.*` imports.
 
 Main dependencies: Gymnasium, NumPy, SciPy, PyTorch, Stable-Baselines3,
-TensorBoard, PyYAML, Matplotlib, Pillow (GIF output). PyBullet and MuJoCo are
-installed but are not used by the current Phase 1 pipeline.
+TensorBoard, PyYAML, Matplotlib, Pillow (GIF output), MuJoCo 3.x (MuJoCo
+backend and 3D viewer). PyBullet is installed but not used yet.
+
+**MuJoCo live window on macOS:** the MuJoCo viewer window must run under
+`mjpython` (installed with MuJoCo), not `python`. GIF output works with any Python.
 
 ---
 
@@ -105,6 +113,11 @@ python -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeepe
 # Watch episodes top-down in slow motion
 python -m src.slingpuck.eval.visualize_goalkeeper --run logs/goalkeeper/<run_dir>
 python -m src.slingpuck.eval.visualize_goalkeeper --policy center --speed 2.6 --start-offset 0.9 --save gk.gif
+
+# MuJoCo: the same policy on 3D physics with the SO-101 arm
+mjpython -m src.slingpuck.eval.view_mujoco --run logs/goalkeeper/<run_dir>          # live 3D window
+python   -m src.slingpuck.eval.view_mujoco --policy center --save gk3d.gif           # GIF
+python   -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s*_* --backend mujoco
 ```
 
 ---
@@ -119,7 +132,7 @@ configs/
   train_goalkeeper.yaml    PPO hyperparameters and seeds for Phase 1
 assets/
   urdf/so101.urdf          SO-101 URDF (not used yet)
-  mujoco/                  SO-101 MuJoCo model (RobotStudio) and an old board scene
+  mujoco/robotstudio_so101/  SO-101 MuJoCo model (RobotStudio MJCF, STS3215 actuators)
 data/real_logs/schema.md   CSV schema for real teleoperation logs (sysid input)
 src/slingpuck/
   config.py                Config loader, params versioning, placeholders, strict mode, randomization, run records
@@ -128,13 +141,15 @@ src/slingpuck/
     backend.py             PuckPhysicsBackend interface, PaddleState, StepEvents, GateCrossing
     puck_dynamics.py       Fast2DPuckSim: friction, walls, divider + gate, puck-puck, kinematic paddle
     servo_model.py         Latency -> deadband -> first-order lag -> rate limit
+    mujoco_goalkeeper.py   MuJoCo scene from config, arm pose (IK), contact calibration, MuJoCo backend
     band_model.py          Old linear band model (M3 replaces it)
     arm_deflection.py      Old compliance model (M3 replaces it)
   sensing/
     camera_model.py        Frame rate, latency, Gaussian noise, dropouts; seeded
     kalman_tracker.py      Constant-velocity Kalman filter with latency compensation
   envs/
-    goalkeeper_env.py      Phase 1 env (recovery task)
+    goalkeeper_env.py      Phase 1 env (recovery task) with physics hooks
+    mujoco_goalkeeper_env.py  Phase 1 env on MuJoCo physics (same spaces and task)
     wrappers.py            PrivilegedObsWrapper (Dict obs for the asymmetric critic)
     sling_env.py           Old Phase 2 env (M3 replaces it)
     match_env.py           Old Phase 3 env (M4 replaces it; has known bugs)
@@ -149,11 +164,12 @@ src/slingpuck/
     save_rate_vs_speed.py  Phase 1 eval with CIs, CSV tables and a plot
     stats.py               Wilson and Student-t confidence intervals
     visualize_goalkeeper.py  Top-down slow-motion viewer (window or GIF)
-    visualize_mujoco.py    Old 3D viewer (does not run, see known problems)
+    view_mujoco.py         3D MuJoCo viewer (mjpython window or GIF)
     vulnerability_window.py  Old Phase 3 baseline (M4 replaces it)
   sysid/fit_physics.py     Old sysid (M3 replaces it)
   deploy/                  Old ONNX export, latency benchmark, LeRobot stub (M5)
 tests/                     pytest suite
+docs/figures/              Figures used in this README
 logs/, tensorboard_logs/, results/   Training runs and eval outputs (not in git)
 ```
 
@@ -228,7 +244,7 @@ cfg["meta"]                          # params_version, params_file, calibrated, 
 ### Placeholders and strict mode
 
 - Every value that is not measured has a `TODO` comment **and** is listed under
-  `placeholders:` in its file. There are 22 in `physics_params_v0.yaml` and 4 in
+  `placeholders:` in its file. There are 26 in `physics_params_v0.yaml` and 4 in
   `servo.yaml`.
 - `load_config(..., strict=True)` raises `ConfigError` while any placeholder or
   null value remains. Use strict mode for every result that you report against
@@ -413,15 +429,15 @@ python -m src.slingpuck.train.train_goalkeeper [--seeds 0 1 2] [--timesteps N] [
   dirty flag, seed), checkpoints every 250k steps, and `final_model.zip`.
 - TensorBoard: `tensorboard_logs/goalkeeper/`. Besides the standard SB3 values,
   the script logs `goalkeeper/save_rate`, `goal_rate` and `none_rate` for each rollout.
-- Run time: about 40 min for each 1M-step seed on the development laptop. The
-  episodes are short, so `reset()` (pre-launch time and threat sampling) is most
-  of the cost.
+- Run time: about 15 min for each 1M-step seed on the development laptop when
+  nothing else runs (40 min with other jobs on the CPU). The episodes are short,
+  so `reset()` (pre-launch time and threat sampling) is most of the cost.
 
 ### Evaluation
 
 ```bash
 python -m src.slingpuck.eval.save_rate_vs_speed --runs <run_dir> [<run_dir> ...] \
-    [--episodes-per-bin 300] [--n-speed-bins 6] [--release-delay 0.0] [--nominal]
+    [--episodes-per-bin 300] [--n-speed-bins 6] [--release-delay 0.0] [--nominal] [--backend 2d|mujoco]
 ```
 
 - Speed bins are stratified: each bin gets the same number of shots, with the
@@ -429,8 +445,12 @@ python -m src.slingpuck.eval.save_rate_vs_speed --runs <run_dir> [<run_dir> ...]
 - **Paired:** all policies get the same shots (same eval seeds).
 - Policies: every PPO run given, plus the scripted baselines
   `center` (always command pan = 0) and `hold` (never move).
-- **Confidence intervals (95%):** PPO uses a Student-t interval across training
-  seeds. The deterministic scripted baselines use a Wilson interval over episodes.
+- **Confidence intervals (95%):** PPO uses the union of a Student-t interval
+  across training seeds (seed variance) and a Wilson interval over one seed's
+  shots (shot sampling). The union matters because all 3 seeds learned the same
+  saturated policy, so the t interval alone has zero width. The deterministic
+  scripted baselines use the Wilson interval only.
+- `--backend mujoco` runs the same eval on MuJoCo physics (see below).
 - Outputs in `results/goalkeeper/<time>/`:
   - `save_rate_vs_speed.csv`
   - `save_rate_vs_start_offset.csv`
@@ -461,30 +481,152 @@ launch, the shot speed, and the outcome.
 | `--nominal` | No domain randomization |
 | `--save file.gif` | Write a GIF instead of opening a window |
 
-### Results so far (seed 0 only, preliminary)
+### Results (3 seeds, 2D physics)
 
-Eval with 150 shots per speed bin, domain-randomized physics, release delay 0,
-start offset uniform over the pan range. 95% Wilson intervals. The final result
-needs all 3 seeds.
+3 training seeds × 1M steps. Eval: 300 threatening shots per speed bin,
+domain-randomized physics, release delay 0, paddle start offset uniform over the
+pan range. 95% CIs as described above. Full tables:
+`results/goalkeeper/m2_final_2d/`.
 
-| Speed (m/s) | PPO seed 0 | Center | Never move |
+![Save rate, 2D physics](docs/figures/save_rate_2d.png)
+
+| Speed (m/s) | PPO (3 seeds) | Center | Never move |
 |---|---|---|---|
-| 0.80–1.17 | 100.0% | 100.0% | ~45% |
-| 1.17–1.53 | 100.0% | 99.3% | ~46% |
-| 1.53–1.90 | 96.7% [92.4, 98.6] | 90.0% [84.2, 93.8] | ~44% |
-| 1.90–2.27 | 86.7% [80.3, 91.2] | 76.7% [69.3, 82.7] | ~34% |
-| 2.27–2.63 | 64.7% [56.7, 71.9] | 50.7% [42.7, 58.6] | ~29% |
-| 2.63–3.00 | 57.3% [49.3, 65.0] | 53.3% [45.4, 61.1] | ~38% |
+| 0.80–1.17 | 100.0% [98.7, 100.0] | 100.0% [98.7, 100.0] | 38.3% [33.0, 43.9] |
+| 1.17–1.53 | 100.0% [98.7, 100.0] | 99.7% [98.1, 99.9] | 39.0% [33.7, 44.6] |
+| 1.53–1.90 | 96.3% [93.6, 97.9] | 90.7% [86.8, 93.5] | 38.7% [33.3, 44.3] |
+| 1.90–2.27 | 85.0% [80.5, 88.6] | 78.0% [73.0, 82.3] | 42.3% [36.9, 48.0] |
+| 2.27–2.63 | 65.3% [59.8, 70.5] | 57.3% [51.7, 62.8] | 36.0% [30.8, 41.6] |
+| 2.63–3.00 | 60.3% [54.7, 65.7] | 57.3% [51.7, 62.8] | 43.3% [37.8, 49.0] |
 
-The "never move" values are from a separate 100-shot run.
-
-**Why PPO does better than "go to center":** PPO commands the far side of the pan
-range (action −1 from a start of +0.9), not the center. With the first-order
-servo lag, a far target keeps the paddle at full speed for longer. A scripted
+**Why PPO does better than "go to center" in 2D:** PPO commands the far side of
+the pan range (action −1), not the center. With the first-order servo lag of the
+2D `ServoModel`, a far target keeps the paddle at full speed for longer. All 3
+seeds learned this same saturated policy (42% of actions are at ±1). A scripted
 "overshoot" policy gives the same save rate as PPO at 1.9 to 2.6 m/s (79.0% vs
-79.0%, center 72.3%). The size of this gain depends on the servo lag time
-constant, which is still a placeholder. Measure the real servo step response
-before you rely on it.
+79.0%, center 72.3%). The MuJoCo results below show that this gain does **not**
+transfer to a different servo model.
+
+---
+
+## MuJoCo simulation
+
+The same Phase 1 task also runs on **MuJoCo physics** with the full SO-101 arm.
+A policy trained on the fast 2D sim runs there without changes, so this is a
+**sim-to-sim transfer test**. It shows which results depend on the simplified
+2D models.
+
+![MuJoCo scene: side and gate cameras](docs/figures/mujoco_scene.png)
+
+### What MuJoCo simulates
+
+| Part | 2D sim | MuJoCo |
+|---|---|---|
+| Board, walls, divider, gate | Analytic boxes | Boxes built from the same config values |
+| Puck | Point mass with radius | Planar cylinder body (x, y, spin) |
+| Sliding friction | Coulomb, μg | The same Coulomb force, applied each step |
+| Wall and paddle contacts | Instant impulse, restitution e | Soft spring-damper contacts, ~4 ms, calibrated to e |
+| Paddle motion | Kinematic, from `ServoModel` | Box fixed to the SO-101 gripper, moved by the real arm dynamics |
+| Pan servo | Latency, deadband, first-order lag, 300 deg/s limit | Latency (same queue), then the STS3215 MuJoCo actuator (kp 998, ±2.94 N·m) |
+| Arm compliance | None | Yes: the arm gives way a little when the puck hits the paddle |
+| Camera, tracker, observation, reward | `GoalkeeperEnv` | The same code (only the physics hooks change) |
+
+### How the scene is built (`physics/mujoco_goalkeeper.py`)
+
+- **From the config:** `MjSpec` builds the board, walls, divider, gate, puck and
+  paddle from the merged config, so MuJoCo and 2D always use the same geometry.
+  The SO-101 model is `assets/mujoco/robotstudio_so101/so101.xml`.
+- **Arm placement:** the base is turned 90° so the arm reaches toward the gate,
+  and placed so the pan axis is exactly at `robot.base_xy_m`.
+- **Arm pose (inverse kinematics):** shoulder_lift, elbow_flex and wrist_flex
+  are solved so the gripper fingertips are at the paddle center. The paddle is a
+  box fixed to the gripper (a custom mount). The pitch joints move the
+  fingertips in a plane about 1 mm beside the pan axis, so the mount absorbs this
+  offset. The hold targets are then corrected for gravity sag. Result: the
+  paddle is on the 2D arc within 0.2 mm at every pan angle (tested).
+- **Contacts:** only explicit contact pairs collide (puck with walls, divider and
+  paddle). They are frictionless, as in 2D. They use a direct spring-damper; the
+  damping is **calibrated in the real scene**: restitution is measured on a side
+  wall and on the arm-held paddle over 24 damping values (each the mean of 5
+  impact phases), and the config value is interpolated. So
+  `board.paddle_restitution` is the effective restitution of the paddle on the
+  compliant arm, which is what sysid will measure from video.
+- **Timestep:** 0.5 ms (2 MuJoCo steps per 1 ms env step). At this step the
+  restitution error is below 3%, and a 3 m/s puck goes about 3 mm into a wall.
+- **Speed:** about 180 episodes/s, almost the same as the 2D env.
+
+Checks against the 2D model (all in `tests/test_mujoco_goalkeeper.py`):
+
+| Check | Result |
+|---|---|
+| Paddle position at pan 0, ±0.2, −0.3 rad | Within 0.2 mm of the 2D arc |
+| Friction deceleration | μg exactly; stop position within 1 mm |
+| Wall restitution (2 m/s) | Config value within 0.02, after the friction loss |
+| Paddle restitution (2 m/s) | Within 0.06; lower at slow impacts (0.39 at 0.8 m/s), because the arm absorbs energy |
+| Gate crossing, divider block | Same events as 2D |
+| Gymnasium `check_env`, spaces | Pass; identical spaces to the 2D env |
+
+Two problems were found and fixed while building this. A free puck tumbled and
+flew off the board after a wall hit, and MuJoCo friction contacts on a soft floor
+made the puck hop ~0.5 mm, which switched friction off for ~10 ms. The planar
+puck with an applied Coulomb force fixes both. MuJoCo's `(timeconst, dampratio)`
+contact form also made low-damping contacts unstable at a 1 ms step (a wall hit
+at 1.5 m/s came back at 6.4 m/s); the direct stiffness/damping form fixes this.
+
+### Sim-to-sim result
+
+The 3 PPO seeds trained on 2D, evaluated on MuJoCo (same shots, same settings).
+Full tables: `results/goalkeeper/m2_final_mujoco/`.
+
+![Save rate, MuJoCo physics](docs/figures/save_rate_mujoco.png)
+
+| Speed (m/s) | PPO 2D | PPO MuJoCo | Center 2D | Center MuJoCo |
+|---|---|---|---|---|
+| 0.80–1.17 | 100.0% | 89.6% [83.6, 95.5] | 100.0% | 98.0% [95.7, 99.1] |
+| 1.17–1.53 | 100.0% | 75.2% [70.2, 79.9] | 99.7% | 77.3% [72.3, 81.7] |
+| 1.53–1.90 | 96.3% | 54.6% [49.0, 60.2] | 90.7% | 54.7% [49.0, 60.2] |
+| 1.90–2.27 | 85.0% | 48.7% [43.1, 54.3] | 78.0% | 48.7% [43.1, 54.3] |
+| 2.27–2.63 | 65.3% | 36.0% [30.8, 41.6] | 57.3% | 36.0% [30.8, 41.6] |
+| 2.63–3.00 | 60.3% | 38.7% [33.3, 44.3] | 57.3% | 38.7% [33.3, 44.3] |
+
+Findings:
+
+1. **The reaction time is much slower in MuJoCo.** The save rate falls by 20 to
+   40 points above 1.2 m/s, for every policy. The cause is the pan step
+   response: the MuJoCo arm is limited by torque and inertia, so it starts slowly
+   and overshoots.
+
+   | Pan step | 2D `ServoModel` | MuJoCo SO-101 |
+   |---|---|---|
+   | +20° → 0: time to 50% | 37 ms | 81 ms |
+   | +20° → 0: overshoot | 0% | 16.5% |
+   | Command +20° → −20°: time to cross 0 | 67 ms | 125 ms |
+
+2. **The PPO advantage does not transfer.** In MuJoCo, PPO is never better than
+   "go to center", and it is worse at slow speeds (89.6% vs 98.0% at 0.8–1.2 m/s).
+   The far-side command exploited the first-order lag of the 2D servo. On the
+   torque-limited MuJoCo arm, it gives no extra speed, and the paddle overshoots
+   past the gate.
+
+3. **What this means for sim2real:** the 2D servo model is the weakest part of
+   the Phase 1 pipeline. Before more training, measure the real SO-101 pan step
+   response with the paddle mounted (time to 50%, overshoot, peak speed) and fit
+   `servo.yaml` to it. Until then, the time-to-cover numbers for Phase 3 are only
+   as good as the servo model. Training in MuJoCo, or a second-order servo model
+   in 2D, are the two options to close this gap.
+
+### MuJoCo viewer
+
+```bash
+mjpython -m src.slingpuck.eval.view_mujoco --run <run_dir>                   # live window (macOS: mjpython)
+python   -m src.slingpuck.eval.view_mujoco --policy center --save gk3d.gif   # GIF, any Python
+```
+
+The same options as the 2D viewer (`--episodes`, `--speed`, `--start-offset`,
+`--release-delay`, `--slowmo`, `--nominal`), plus `--camera gate|side|top`,
+`--width`, `--height`. The blue ring is the Kalman estimate (what the policy
+sees), and the small blue sphere is the last camera frame. `--episodes 0` in the
+live window runs until you close it.
 
 ---
 
@@ -505,6 +647,7 @@ pytest -q
 | `test_goalkeeper_env.py` | **Gymnasium `check_env`** (Box and Dict), seeded repeat, threat sampling, save and goal outcomes, smoothness penalty, policy sees only tracked data, randomization, locked paddle, release delay, viewer |
 | `test_asymmetric_policy.py` | Actor ignores privileged input, critic uses it, save and load |
 | `test_stats.py` | Wilson and t intervals against known values |
+| `test_mujoco_goalkeeper.py` | Paddle on the 2D arc, pan sign, Coulomb friction, calibrated wall and paddle restitution, gate crossing and divider, `check_env` and identical spaces, center saves a slow shot, randomization updates the model |
 | `test_band.py` | Old band hysteresis (M3 replaces it with a closed-loop test) |
 
 ---
@@ -537,6 +680,18 @@ pytest -q
   period, would make training faster.
 - The pan encoder in the observation has no noise or quantization yet (TODO).
 - A scripted overshoot baseline is not yet part of the eval.
+- **The 2D servo model does not match MuJoCo** (see the sim-to-sim result).
+  Measure the real pan step response and fit `servo.yaml`.
+
+### MuJoCo backend
+
+- The threat check at reset uses the 2D sim, so a few shots that count as
+  threats may not score in MuJoCo even without a paddle.
+- Servo rate and lag are not randomized in MuJoCo (the actuator parameters come
+  from the RobotStudio model). Friction, restitution, puck mass, gate width,
+  latency and camera values are randomized.
+- The arm pose and paddle mount are designed in sim; the real end effector and
+  its mounting are not known yet (`robot.*` placeholders).
 
 ### Later milestones (old code, not yet rebuilt)
 
@@ -550,13 +705,9 @@ pytest -q
 - **M5:** `deploy/lerobot_interface.py` builds the old 6-value observation; it
   must build the 8-value `GoalkeeperEnv` observation. `train_selector.py` loads
   model paths that do not exist.
-- **3D viewer:** `eval/visualize_mujoco.py` does not run. The scene `include`
-  path is wrong, the joint names are wrong (the SO-101 model uses `shoulder_pan`,
-  `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper`), the board
-  is the old size, and the script reads env attributes that no longer exist. A fix
-  needs inverse kinematics to put the paddle in front of the gate.
-- **PyBullet backend:** not implemented yet. The `PuckPhysicsBackend` interface
-  is ready for it.
+- **PyBullet backend:** not implemented. The MuJoCo backend now covers the arm
+  simulation that the plan gave to PyBullet; the `PuckPhysicsBackend` interface
+  is ready if PyBullet is still needed.
 
 ---
 
@@ -576,7 +727,9 @@ its config file. Strict mode does not run until you replace them.
 | Arm base position | `robot.base_xy_m` | Paddle arc |
 | Pan joint zero offset | `robot.pan_zero_offset_rad` | Sim-to-robot angle mapping |
 | Paddle (end effector) width and thickness | `robot.paddle_width_m`, `robot.paddle_thickness_m` | Blocking geometry |
-| Servo speed, step response, deadband, latency | `servo.*` | Reaction time; the size of the PPO overshoot gain |
+| Paddle height and mass, arm base height | `robot.paddle_height_m`, `robot.paddle_mass_kg`, `robot.base_z_m` | MuJoCo arm pose and dynamics |
+| Wall and divider height | `board.wall_height_m` | MuJoCo board |
+| **Pan step response with the paddle mounted** (time to 50%, overshoot, peak speed), deadband, latency | `servo.*` | **Most important:** decides which servo model (2D or MuJoCo) is right |
 | Camera latency, noise, dropout rate | `camera.*` | Tracker accuracy |
 | Real shot speeds | `goalkeeper.speed_range_m_s` | Phase 1 speed range |
 | Game scoring rules | `scoring` | Phase 3 reward |

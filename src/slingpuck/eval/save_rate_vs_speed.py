@@ -5,8 +5,10 @@ same shots (paired eval seeds). Only threatening shots count (shots that would
 score with no paddle). Speeds are stratified: each bin gets the same number of
 episodes with speed uniform in the bin.
 
-CIs: PPO uses a 95% Student-t interval across training seeds. Scripted baselines
-(deterministic) use a 95% Wilson interval over episodes.
+CIs (95%): PPO uses the union of a Student-t interval across training seeds
+(seed variance) and a Wilson interval over one seed's shots (shot sampling), so
+the interval is not zero-width when all seeds learn the same policy. Scripted
+baselines (deterministic) use the Wilson interval only.
 
 Example:
     python -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s0_* \
@@ -76,12 +78,16 @@ def rate_with_ci(groups, select):
         per_group.append(np.mean(saved) if saved else np.nan)
         k_all += sum(saved)
         n_all += len(saved)
-    if len(groups) > 1:
-        mean, lo_ci, hi_ci = t_ci(per_group)
-        method = f"t across {len(groups)} training seeds"
+    # All groups see the same shots, so the Wilson part uses the shot count of one group.
+    g = len(groups)
+    w_lo, w_hi = wilson_ci(int(round(k_all / g)), int(round(n_all / g)))
+    if g > 1:
+        mean, t_lo, t_hi = t_ci(per_group)
+        lo_ci, hi_ci = np.nanmin([t_lo, w_lo]), np.nanmax([t_hi, w_hi])
+        method = f"union of t across {len(groups)} training seeds and Wilson over episodes"
     else:
         mean = k_all / n_all if n_all else np.nan
-        lo_ci, hi_ci = wilson_ci(k_all, n_all)
+        lo_ci, hi_ci = w_lo, w_hi
         method = "Wilson over episodes"
     return {"save_rate": mean, "ci_lo": lo_ci, "ci_hi": hi_ci, "episodes": n_all, "ci_method": method}
 
