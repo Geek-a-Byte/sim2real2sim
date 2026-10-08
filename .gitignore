@@ -11,3 +11,4 @@ runs/
 *.onnx
 save_rate_curve.png
 results/
+/cache/

@@ -28,10 +28,11 @@ The project has three phases:
 9. [MuJoCo simulation](#mujoco-simulation)
 10. [Phase 2: targeted shot](#phase-2-targeted-shot)
 11. [System identification (sim2real2sim)](#system-identification-sim2real2sim)
-12. [Tests](#tests)
-13. [Reproducibility](#reproducibility)
-14. [Known problems and open items](#known-problems-and-open-items)
-15. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
+12. [Phase 3: match against an opponent](#phase-3-match-against-an-opponent)
+13. [Tests](#tests)
+14. [Reproducibility](#reproducibility)
+15. [Known problems and open items](#known-problems-and-open-items)
+16. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
 
 ---
 
@@ -43,8 +44,8 @@ The project has three phases:
 | M2 | Phase 1 env, asymmetric PPO, save-rate eval, viewers | Done (3 seeds trained and evaluated). Waits for review |
 | — | MuJoCo backend for Phase 1 (board, puck, SO-101 arm), 3D viewer, sim-to-sim eval | Done |
 | M3 | Phase 2 env, band and deflection models, sysid with synthetic logs, parity eval | Done (3 seeds trained and evaluated). Waits for review |
-| M4 | Opponent model, Phase 3 hierarchical env, rule-based baseline | Old code only. Has known bugs |
-| M5 | Selector training, ablations, ONNX export, latency benchmark | Old code only. Not reviewed |
+| M4 | Opponent model, Phase 3 hierarchical env, frozen primitives, rule-based baselines, match eval | Done. Waits for review |
+| M5 | Selector training, ablations, vulnerability window, ONNX export, latency benchmark | Not started (old deploy code only) |
 
 "Old code" is code from before the M1 rework. It runs, but it was not
 rebuilt on the new physics and sensing models. Each later milestone replaces it.
@@ -64,7 +65,8 @@ Git history:
 | `c2947e0` | MuJoCo contact calibration, tests, final M2 results |
 | `d354cd8` | M3: band, deflection, Phase 2 sling env |
 | `acb49f4` | M3: sysid fits |
-| (latest) | M3: run_sysid, hole-rate and parity eval, results |
+| `3a1b0d0` | M3: run_sysid, hole-rate and parity eval, results |
+| (latest) | M4: opponent, match env, primitives, baselines, match eval |
 
 ---
 
@@ -75,7 +77,7 @@ Requirements: Python 3.10 or later. The project was tested with Python 3.14
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 114 tests, about 40 s (the sysid recovery tests are the slow ones)
+pytest -q            # 127 tests, about 40 s (the sysid recovery tests are the slow ones)
 ```
 
 **Run all commands from the project root folder**, in the form
@@ -133,6 +135,10 @@ python -m src.slingpuck.sysid.synthetic --out data/real_logs/synthetic          
 python -m src.slingpuck.sysid.run_sysid --logs data/real_logs/synthetic --natural-length 0.152
 python -m src.slingpuck.eval.hole_rate --parity data/real_logs/synthetic/shots.csv \
        --versions v0 v1 --cfg-dir data/real_logs/synthetic/fit
+
+# Phase 3: scripted selectors against the scripted opponent (first run builds the block table, ~40 s)
+python -m src.slingpuck.eval.match_eval
+python -m src.slingpuck.eval.match_eval --policies greedy_sling reload_rule tell_rule --tell 0 0.5 1
 ```
 
 ---
@@ -170,23 +176,28 @@ src/slingpuck/
     mujoco_goalkeeper_env.py  Phase 1 env on MuJoCo physics (same spaces and task)
     wrappers.py            PrivilegedObsWrapper (Dict obs for the asymmetric critic)
     sling_env.py           Phase 2 env (slide, pull, correct, release, flight)
-    match_env.py           Old Phase 3 env (M4 replaces it; has known bugs)
+    match_env.py           Phase 3 event-level match (block / sling / hold over frozen primitives)
+  opponent/
+    scripted_opponent.py   Human-like opponent: reload, place, pull, hold, release; hand trajectory; tell
+  primitives/
+    block.py               Frozen block primitive: save-probability table measured on the Phase 1 env (cached)
+    sling.py               Frozen sling primitive: timings and success probability
   policies/
     asymmetric.py          AsymmetricActorCriticPolicy for SB3 PPO
     scripted.py            CenterBlocker, HoldStart baselines (Phase 1)
     sling_scripted.py      SlideCenter, SlideCenterCorrect baselines (Phase 2)
+    match_scripted.py      AlwaysBlock, GreedySling, ReloadRule, TellRule, OracleReload (Phase 3)
   train/
     common.py              Env factories, run loader, shared PPO runner and CLI, outcome logging
     train_goalkeeper.py    Phase 1 PPO training
     train_sling.py         Phase 2 PPO training
-    train_selector.py      Old Phase 3 training (M5 replaces it)
   eval/
     save_rate_vs_speed.py  Phase 1 eval with CIs, CSV tables and a plot
     hole_rate.py           Phase 2 eval: success vs shot count; sim-vs-real parity
     stats.py               Wilson and Student-t confidence intervals
     visualize_goalkeeper.py  Top-down slow-motion viewer (window or GIF)
     view_mujoco.py         3D MuJoCo viewer (mjpython window or GIF)
-    vulnerability_window.py  Old Phase 3 baseline (M4 replaces it)
+    match_eval.py          Phase 3 eval: win/loss, puck difference, tell sweep, hand ablation
   sysid/
     schema.py              Log schemas and loaders
     synthetic.py           Synthetic logs from the sim with known true values
@@ -195,7 +206,7 @@ src/slingpuck/
   deploy/                  Old ONNX export, latency benchmark, LeRobot stub (M5)
 tests/                     pytest suite
 docs/figures/              Figures used in this README
-logs/, tensorboard_logs/, results/   Training runs and eval outputs (not in git)
+logs/, tensorboard_logs/, results/, cache/   Training runs, eval outputs, primitive tables (not in git)
 ```
 
 ---
@@ -832,6 +843,122 @@ sim2real2sim loop: log real shots, fit, write a new version, check parity, retra
 
 ---
 
+## Phase 3: match against an opponent
+
+### Design: an event-level match over frozen primitives
+
+Phase 3 needs millions of high-level decisions, so `envs/match_env.py` does not
+simulate the puck and the arm at 1 kHz. It runs at 10 ms steps and uses:
+
+- **Opponent shots:** straight flights with Coulomb friction (analytic arrival time
+  at the gate). Shots fly straight (Phase 2 finding), so the launch x decides
+  whether a shot is a threat.
+- **Frozen block primitive** (`primitives/block.py`): a save-probability table
+  measured once on the Phase 1 env (domain-randomized) with the block policy, and
+  cached in `cache/`:
+  - `p_gate(speed)`: the paddle was settled at the gate when the shot launched;
+  - `p_edge(speed, delay)`: the arm was just back from the band, `delay` s late.
+- **Frozen sling primitive** (`primitives/sling.py`): fixed timings and the
+  Phase 2 success probability (94.6%, from the M3 eval).
+
+Speed: about 70,000 decisions per second (one process). The low-level physics
+reaches Phase 3 only through these tables, so improving a primitive (or its
+sysid) means rebuilding its table, not the match sim.
+
+The measured block table shows the vulnerability window in numbers. From the
+edge of the pan range (just back from the band), the paddle saves 100% of 1 m/s
+shots if it is free at the launch, but only 60% of 1.6 m/s shots and almost none
+above 2 m/s. A settled paddle saves 100% at every speed. So the gate is safe only
+if the arm is settled **before** a fast threat launches.
+
+### Opponent (`opponent/scripted_opponent.py`)
+
+- Cycle: **reload** (hand fetches a puck) → **place** (to the band) → **pull** (pull ~
+  shot speed) → **hold** (random pause) → **release**, about 1.2 s per shot.
+- The hand covers the loaded puck from the overhead camera; the camera sees the
+  hand (position, velocity, 5 mm noise).
+- **`tell_strength`:** during place, pull and hold, the hand x is
+  `tell · x_launch + (1 − tell) · x_decoy`, with the decoy from the same
+  distribution. 0 = the hand says nothing about the threat; 1 = it shows the
+  launch x exactly (tested: correlation ~0 at 0, exact at 1).
+- 50% of shots are threats (placeholder). Seeded generator; shots fly toward the
+  agent (both were bugs in the old code).
+
+### Actions, arm states, observation, reward
+
+| Action | Effect |
+|---|---|
+| 0 block | From the band: return to the gate (0.6 s). At the gate: stay; the block primitive defends |
+| 1 sling | From the gate: move to the band (0.6 s), fetch the next puck (1.0 s), sling (0.9 s). From the band: fetch and sling. Ignored when busy or out of pucks |
+| 2 hold | Keep the arm where it is (at the band: ready for another sling, gate open) |
+
+Arm states: gate → to_band → slinging → at_band → to_gate → gate. The gate is
+undefended from the sling command until the arm is back (the explicit recovery
+time), and for `settle_after_return_s` after that the paddle is still at the edge.
+
+- **Observation (20 values):** tracked incoming opponent puck (only after the
+  camera latency), opponent hand (x, y, vx, vy), arm state (one-hot, time left,
+  paddle settled), puck counts, own puck in flight, time left.
+  `match.observe_hand: false` zeros the hand values (the M5 ablation).
+- **Privileged (critic only):** opponent phase, time to release, next shot
+  (threat, x, speed), incoming threat and its time to the gate.
+- **Reward (placeholder, `scoring`, TODO: real rules):** +1 per puck sent, −1 per
+  puck received; the first side with no pucks wins (+5 / −5). 5 pucks per side,
+  60 s limit.
+
+### Baselines (`policies/match_scripted.py`) and results
+
+```bash
+python -m src.slingpuck.eval.match_eval [--policies ...] [--matches 400] [--tell 0 0.5 1] [--no-hand]
+```
+
+| Policy | Rule |
+|---|---|
+| `always_block` | Never slings |
+| `greedy_sling` | Slings whenever possible, never returns |
+| `reload_rule` | **The plan's baseline:** sling only when the opponent reloads (hand away from its band line); otherwise go back to the gate |
+| `tell_rule` | Like `reload_rule`, but also slings while the opponent aims if the hand x shows a likely miss |
+| `oracle_reload` | `reload_rule` with the opponent's true phase (privileged) |
+
+The hand-based reload detector is reliable where it matters: it marks the
+opponent as aiming in 99.6% of pull/hold frames.
+
+![Phase 3 baselines](docs/figures/match_baselines.png)
+
+| Policy (400 matches) | Win | Loss | Sent − received | Conceded while away |
+|---|---|---|---|---|
+| `always_block` | 0% | 0% | +0.0 | 0 |
+| `greedy_sling` | 33% [28, 38] | 17% | +1.1 [+0.8, +1.5] | 20 / match |
+| `tell_rule` | 12% [10, 16] | 46% | −1.8 | 19 / match |
+| `reload_rule` | 4% [3, 7] | 67% | −3.4 | 17 / match |
+| `oracle_reload` | 4% | 63% | −3.3 | 17 / match |
+
+![Tell sweep](docs/figures/match_tell_sweep.png)
+
+### Findings (with placeholder timings and rules)
+
+1. **The plan's baseline does badly.** A sling away from the gate takes about 3.1 s
+   (out, fetch, sling, back); the opponent's reload is about 0.6 s. "Sling only
+   while the opponent reloads" therefore always leaves the gate open for the next
+   2–3 shots. Even with the true phase (oracle) it loses 63% of matches.
+2. **The tell helps, but little.** `tell_rule` beats `reload_rule` at every
+   `tell_strength`, but its gain does not grow clearly with the tell: knowing that
+   the *current* shot is a miss protects only one of the ~2.5 shots that come
+   during a sling.
+3. **Under the "first empty side wins" rule the match is a throughput race.**
+   With the robot timings scaled ×0.5 (sling-and-return cycle 1.6 s), every
+   strategy wins 100%; at the default 3.1 s, greedy slinging beats every
+   defensive rule. Strategy matters only in a narrow band where the robot's
+   sling rate is close to the opponent's threat rate.
+
+So the Phase 3 research question ("when is it safe to commit to a sling?")
+depends on values that are not measured yet: **the real scoring rules**, the
+robot's fetch, sling and move times, and the human's cycle time and accuracy.
+M5 (selector training, ablations, vulnerability window) should run after those
+are known, or over a sweep of them.
+
+---
+
 ## Tests
 
 ```bash
@@ -852,6 +979,7 @@ pytest -q
 | `test_mujoco_goalkeeper.py` | Paddle on the 2D arc, pan sign, Coulomb friction, calibrated wall and paddle restitution, gate crossing and divider, `check_env` and identical spaces, center saves a slow shot, randomization updates the model |
 | `test_band.py` | **Hysteresis loop closes** and loses the set fraction (3 exponents × 3 losses), monotonic tension, pre-tension, force direction, release energy balance, energy transfer, almost-straight launch, deflection, tiny pull does not launch |
 | `test_sling_env.py` | `check_env` (Box and Dict), 2 steps with correction and 1 without, seeded repeat, noiseless center hit and off-center miss, reward, band depth seen after the pull, scripted baselines |
+| `test_match.py` | Opponent: tell 1 shows the launch x exactly, tell 0 hides it, threats aim inside the gate, phases in order, smooth hand; match: `check_env`, **pucks conserved**, rewards add up, a settled blocker saves every threat, greedy concedes every threat while away, sling timing, seeded repeat, hand ablation, puck hidden before the camera latency, reload detection, block-table interpolation |
 | `test_sysid.py` | Schema checks, synthetic recovery of band, servo and shot parameters, closed loop in the bench log, versioned params file, synthetic fits never go to `configs/`, transit-time interpolation |
 
 ---
@@ -909,17 +1037,22 @@ pytest -q
 - The pull-back assumes the arm can reach the band region; with the placeholder
   base position the band is only ~10 cm from the pan axis. Check the reach on the
   real setup.
-- `match_env.py` (old, M4) still calls the old `SlingEnv` API.
+
+### Phase 3 (M4)
+
+- Fidelity: block and sling outcomes come from measured tables, not physics; the
+  table is built with the scripted center blocker (set `match.block_table.policy`
+  to a goalkeeper run to use a trained policy). One opponent puck at a time is
+  resolved at the gate; puck-puck collisions in the gate are not modeled.
+- The robot sling ignores where the agent's pucks lie (a fixed fetch time).
+- The opponent never blocks, and its accuracy does not depend on the match state.
+- The game balance depends on placeholder timings and rules (see the findings).
 
 ### Later milestones (old code, not yet rebuilt)
 
-- **M4:** `opponent/scripted_opponent.py` fires shots **away** from the gate (sign
-  error), and it uses the global NumPy random state. `match_env.py` does not
-  count goals during sling recovery, and a sling resolves in one step. The opponent
-  gives a noisy angle, not a hand position and velocity.
 - **M5:** `deploy/lerobot_interface.py` builds the old 6-value observation; it
-  must build the 8-value `GoalkeeperEnv` observation. `train_selector.py` loads
-  model paths that do not exist.
+  must build the 8-value `GoalkeeperEnv` observation. The old `train_selector.py`
+  and `vulnerability_window.py` were removed in M4; M5 rebuilds them on `MatchEnv`.
 - **PyBullet backend:** not implemented. The MuJoCo backend now covers the arm
   simulation that the plan gave to PyBullet; the `PuckPhysicsBackend` interface
   is ready if PyBullet is still needed.
@@ -948,5 +1081,7 @@ its config file. Strict mode does not run until you replace them.
 | Wall and divider height | `board.wall_height_m` | MuJoCo board |
 | **Pan step response with the paddle mounted** (time to 50%, overshoot, peak speed), deadband, latency | `servo.*` | **Most important:** decides which servo model (2D or MuJoCo) is right |
 | Camera latency, noise, dropout rate | `camera.*` | Tracker accuracy |
-| Real shot speeds | `goalkeeper.speed_range_m_s` | Phase 1 speed range |
-| Game scoring rules | `scoring` | Phase 3 reward |
+| Real shot speeds | `goalkeeper.speed_range_m_s`, `opponent.shot_speed_range_m_s` | Phase 1 range; opponent model |
+| **Game scoring rules** | `scoring` | Phase 3 reward and win rule; decides whether the match is a throughput race |
+| **Robot fetch, sling and move times** | `match.fetch_time_s`, `match.sling_core_s`, `match.move_*` | Length of the vulnerability window |
+| **Human opponent timing and accuracy** (video of human play) | `opponent.*` | Opponent cycle, threat rate, tell |
