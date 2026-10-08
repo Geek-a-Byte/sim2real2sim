@@ -6,7 +6,7 @@
 """
 import numpy as np
 
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
 
 _PREV_ACTION = GoalkeeperEnv.POLICY_OBS_NAMES.index("prev_action")
 

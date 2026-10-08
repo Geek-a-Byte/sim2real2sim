@@ -9,7 +9,7 @@ CIs: PPO uses a 95% Student-t interval across training seeds. Scripted baselines
 (deterministic) use a 95% Wilson interval over episodes.
 
 Example:
-    python -m slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s0_* \
+    python -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s0_* \
         --episodes-per-bin 300
 Outputs CSV tables, a PNG figure and eval_meta.yaml in results/goalkeeper/<timestamp>/.
 save_rate_grid.csv (speed x start offset) is the time-to-cover result that Phase 3
@@ -28,12 +28,11 @@ import yaml
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from stable_baselines3 import PPO  # noqa: E402
 
-from slingpuck.config import REPO_ROOT, git_state, load_config  # noqa: E402
-from slingpuck.eval.stats import t_ci, wilson_ci  # noqa: E402
-from slingpuck.policies.scripted import CenterBlocker, HoldStart  # noqa: E402
-from slingpuck.train.common import make_goalkeeper_env  # noqa: E402
+from src.slingpuck.config import REPO_ROOT, git_state, load_config  # noqa: E402
+from src.slingpuck.eval.stats import t_ci, wilson_ci  # noqa: E402
+from src.slingpuck.policies.scripted import CenterBlocker, HoldStart  # noqa: E402
+from src.slingpuck.train.common import load_trained_run, make_goalkeeper_env  # noqa: E402
 
 N_START_BINS = 4
 
@@ -197,9 +196,7 @@ def main():
     run_meta = []
     for run in args.runs:
         run = Path(run)
-        run_cfg = yaml.safe_load((run / "run_config.yaml").read_text())
-        asymmetric = run_cfg["train"]["policy"] == "asymmetric"
-        model = PPO.load(run / "final_model.zip", device="cpu")
+        model, asymmetric, run_cfg = load_trained_run(run)
         print(f"Evaluating {run.name}")
         results["ppo"].append(run_episodes(model, config, asymmetric, speed_bins, args.episodes_per_bin,
                                            args.eval_seed, randomize, args.release_delay))

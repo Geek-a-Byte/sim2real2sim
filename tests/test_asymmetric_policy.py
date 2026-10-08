@@ -2,9 +2,9 @@ import numpy as np
 import torch as th
 from stable_baselines3 import PPO
 
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from slingpuck.envs.wrappers import PrivilegedObsWrapper
-from slingpuck.policies.asymmetric import AsymmetricActorCriticPolicy
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
+from src.slingpuck.policies.asymmetric import AsymmetricActorCriticPolicy
 
 
 def test_actor_ignores_privileged_critic_uses_it(cfg, tmp_path):

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from slingpuck.physics.puck_dynamics import GRAVITY, BoardGeometry, Fast2DPuckSim, PuckParams
+from src.slingpuck.physics.puck_dynamics import GRAVITY, BoardGeometry, Fast2DPuckSim, PuckParams
 
 DT = 0.001
 
@@ -120,7 +120,7 @@ def test_rejects_invalid_setup(cfg):
 
 
 def paddle(center, vel=(0.0, 0.0), omega=0.0, angle=0.0, e=0.5):
-    from slingpuck.physics.backend import PaddleState
+    from src.slingpuck.physics.backend import PaddleState
     return PaddleState(np.array(center, float), angle, np.array(vel, float), omega, 0.015, 0.003, e)
 
 

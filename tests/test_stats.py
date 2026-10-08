@@ -1,6 +1,6 @@
 import pytest
 
-from slingpuck.eval.stats import t_ci, wilson_ci
+from src.slingpuck.eval.stats import t_ci, wilson_ci
 
 
 def test_wilson_known_values():

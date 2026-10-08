@@ -1,7 +1,7 @@
 import numpy as np
 
-from slingpuck.sensing.camera_model import CameraModel, Frame
-from slingpuck.sensing.kalman_tracker import KalmanTracker
+from src.slingpuck.sensing.camera_model import CameraModel, Frame
+from src.slingpuck.sensing.kalman_tracker import KalmanTracker
 
 DT = 0.001
 

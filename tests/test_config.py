@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import yaml
 
-from slingpuck.config import (DEFAULT_CONFIG_DIR, ConfigError, load_config, sample_randomized,
+from src.slingpuck.config import (DEFAULT_CONFIG_DIR, ConfigError, load_config, sample_randomized,
                               save_run_config)
 
 

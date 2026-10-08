@@ -2,9 +2,9 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from slingpuck.opponent.scripted_opponent import ScriptedOpponent
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from slingpuck.envs.sling_env import SlingEnv
+from src.slingpuck.opponent.scripted_opponent import ScriptedOpponent
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.sling_env import SlingEnv
 
 class MatchEnv(gym.Env):
     """

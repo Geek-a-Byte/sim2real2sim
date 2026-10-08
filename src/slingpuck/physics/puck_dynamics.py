@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from slingpuck.physics.backend import GateCrossing, PaddleState, PuckPhysicsBackend, StepEvents
+from src.slingpuck.physics.backend import GateCrossing, PaddleState, PuckPhysicsBackend, StepEvents
 
 GRAVITY = 9.81
 

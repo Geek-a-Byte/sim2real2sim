@@ -2,8 +2,8 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from slingpuck.physics.band_model import ElasticBand
-from slingpuck.physics.arm_deflection import DeflectionModel
+from src.slingpuck.physics.band_model import ElasticBand
+from src.slingpuck.physics.arm_deflection import DeflectionModel
 
 class SlingEnv(gym.Env):
     """

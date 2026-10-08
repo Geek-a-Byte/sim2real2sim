@@ -1,7 +1,7 @@
 """Train the Phase 1 goalkeeper with PPO.
 
 Example:
-    python -m slingpuck.train.train_goalkeeper --seeds 0 1 2
+    python -m src.slingpuck.train.train_goalkeeper --seeds 0 1 2
 Each seed writes logs/goalkeeper/<run_id>/ with run_config.yaml (physics params
 version, train config, git hash, seed), checkpoints and final_model.zip, and
 TensorBoard logs under tensorboard_logs/goalkeeper/.
@@ -14,9 +14,9 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from slingpuck.config import REPO_ROOT, load_config, save_run_config
-from slingpuck.policies.asymmetric import AsymmetricActorCriticPolicy
-from slingpuck.train.common import OutcomeLoggerCallback, goalkeeper_env_fn, load_train_config, new_run_dir
+from src.slingpuck.config import REPO_ROOT, load_config, save_run_config
+from src.slingpuck.policies.asymmetric import AsymmetricActorCriticPolicy
+from src.slingpuck.train.common import OutcomeLoggerCallback, goalkeeper_env_fn, load_train_config, new_run_dir
 
 
 def train_one(config: dict, train_cfg: dict, seed: int) -> str:

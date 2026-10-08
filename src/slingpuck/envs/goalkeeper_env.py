@@ -23,12 +23,12 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from slingpuck.config import sample_randomized
-from slingpuck.kinematics import GoalkeeperGeometry
-from slingpuck.physics.puck_dynamics import Fast2DPuckSim
-from slingpuck.physics.servo_model import ServoModel
-from slingpuck.sensing.camera_model import CameraModel
-from slingpuck.sensing.kalman_tracker import KalmanTracker
+from src.slingpuck.config import sample_randomized
+from src.slingpuck.kinematics import GoalkeeperGeometry
+from src.slingpuck.physics.puck_dynamics import Fast2DPuckSim
+from src.slingpuck.physics.servo_model import ServoModel
+from src.slingpuck.sensing.camera_model import CameraModel
+from src.slingpuck.sensing.kalman_tracker import KalmanTracker
 
 SAVE, GOAL, NONE = "save", "goal", "none"
 REWARD = {SAVE: 1.0, GOAL: -1.0, NONE: 0.0}

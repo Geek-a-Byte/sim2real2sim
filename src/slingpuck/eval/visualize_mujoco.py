@@ -1,11 +1,11 @@
 import time
-from slingpuck.config import load_config
+from src.slingpuck.config import load_config
 import mujoco
 import mujoco.viewer
 import numpy as np
 from stable_baselines3 import PPO
 
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
 
 def visualize(model_path, params_version="latest"):
     config = load_config(params_version)

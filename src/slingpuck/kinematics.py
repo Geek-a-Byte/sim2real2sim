@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from slingpuck.physics.backend import PaddleState
+from src.slingpuck.physics.backend import PaddleState
 
 
 @dataclass(frozen=True)

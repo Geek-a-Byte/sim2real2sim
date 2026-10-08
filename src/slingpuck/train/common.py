@@ -6,9 +6,9 @@ from pathlib import Path
 import yaml
 from stable_baselines3.common.callbacks import BaseCallback
 
-from slingpuck.config import REPO_ROOT
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from slingpuck.envs.wrappers import PrivilegedObsWrapper
+from src.slingpuck.config import REPO_ROOT
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
 
 
 def make_goalkeeper_env(config: dict, asymmetric: bool):
@@ -19,6 +19,25 @@ def make_goalkeeper_env(config: dict, asymmetric: bool):
 def goalkeeper_env_fn(config: dict, asymmetric: bool):
     """Picklable env factory for SubprocVecEnv."""
     return partial(make_goalkeeper_env, config, asymmetric)
+
+
+def load_trained_run(run_dir, device: str = "cpu"):
+    """Load final_model.zip from a training run. Returns (model, asymmetric, run_cfg).
+
+    The model file stores the policy class by its module path. custom_objects
+    replaces it with the class imported here, so a run loads whether the package
+    was imported as `slingpuck` or `src.slingpuck` when it was trained.
+    """
+    from stable_baselines3 import PPO
+
+    from src.slingpuck.policies.asymmetric import AsymmetricActorCriticPolicy
+
+    run_dir = Path(run_dir)
+    run_cfg = yaml.safe_load((run_dir / "run_config.yaml").read_text())
+    asymmetric = run_cfg["train"]["policy"] == "asymmetric"
+    custom = {"policy_class": AsymmetricActorCriticPolicy} if asymmetric else None
+    model = PPO.load(run_dir / "final_model.zip", device=device, custom_objects=custom)
+    return model, asymmetric, run_cfg
 
 
 def load_train_config(path) -> dict:

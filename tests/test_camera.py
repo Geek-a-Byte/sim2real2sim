@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from slingpuck.sensing.camera_model import CameraModel
+from src.slingpuck.sensing.camera_model import CameraModel
 
 DT = 0.001
 

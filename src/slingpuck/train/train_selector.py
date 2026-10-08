@@ -1,11 +1,11 @@
 import os
-from slingpuck.config import load_config
+from src.slingpuck.config import load_config
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from slingpuck.envs.match_env import MatchEnv
-from slingpuck.eval.vulnerability_window import run_rule_based_baseline
+from src.slingpuck.envs.match_env import MatchEnv
+from src.slingpuck.eval.vulnerability_window import run_rule_based_baseline
 
 def train_and_evaluate_ablation(tell_strength, config, phase1_model, phase2_model, log_dir):
     config['opponent']['tell_strength'] = tell_strength

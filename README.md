@@ -68,9 +68,20 @@ pip install -e ".[dev]"
 pytest -q            # 72 tests, about 6 s
 ```
 
-On the development machine, use the miniconda interpreter
-(`~/miniconda3/bin/python3`). The Homebrew Python 3.10 does not have pytest or
-PyBullet installed.
+**Run all commands from the project root folder**, in the form
+`python -m src.slingpuck.<module>`. The code imports the package as
+`src.slingpuck`, so it works without `pip install -e .`.
+
+**Which Python on the development machine:**
+
+| Command | Interpreter | Status |
+|---|---|---|
+| `python` | Homebrew Python 3.10 (shell alias) | Viewer and training work. The eval needs `scipy`, and the tests need `pytest`. Install them with `python -m pip install scipy pandas pytest` |
+| `python3` or `~/miniconda3/bin/python3` | Miniconda Python 3.14 | Everything works. All packages are installed |
+
+Trained models load in either Python. `train/common.load_trained_run` replaces
+the policy class path that is stored in the model file, so a model trained with
+`slingpuck.*` imports also loads with `src.slingpuck.*` imports.
 
 Main dependencies: Gymnasium, NumPy, SciPy, PyTorch, Stable-Baselines3,
 TensorBoard, PyYAML, Matplotlib, Pillow (GIF output). PyBullet and MuJoCo are
@@ -82,18 +93,18 @@ installed but are not used by the current Phase 1 pipeline.
 
 ```bash
 # Train the goalkeeper (seeds and hyperparameters from configs/train_goalkeeper.yaml)
-python -m slingpuck.train.train_goalkeeper
-python -m slingpuck.train.train_goalkeeper --seeds 0 --timesteps 200000   # shorter run
+python -m src.slingpuck.train.train_goalkeeper
+python -m src.slingpuck.train.train_goalkeeper --seeds 0 --timesteps 200000   # shorter run
 
 # Watch training
 tensorboard --logdir tensorboard_logs/goalkeeper
 
 # Evaluate: save rate vs puck speed, with 95% CIs, against scripted baselines
-python -m slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s*_*
+python -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s*_*
 
 # Watch episodes top-down in slow motion
-python -m slingpuck.eval.visualize_goalkeeper --run logs/goalkeeper/<run_dir>
-python -m slingpuck.eval.visualize_goalkeeper --policy center --speed 2.6 --start-offset 0.9 --save gk.gif
+python -m src.slingpuck.eval.visualize_goalkeeper --run logs/goalkeeper/<run_dir>
+python -m src.slingpuck.eval.visualize_goalkeeper --policy center --speed 2.6 --start-offset 0.9 --save gk.gif
 ```
 
 ---
@@ -202,7 +213,7 @@ overrides an earlier one, key by key:
 3. `env.yaml`
 
 ```python
-from slingpuck.config import load_config, sample_randomized, save_run_config
+from src.slingpuck.config import load_config, sample_randomized, save_run_config
 cfg = load_config("latest")          # or "v0", 0, "v3"
 cfg["meta"]                          # params_version, params_file, calibrated, placeholders, git_hash, git_dirty
 ```
@@ -392,7 +403,7 @@ policy, where the actor and the critic both see only the tracked observation.
 ### Training
 
 ```bash
-python -m slingpuck.train.train_goalkeeper [--seeds 0 1 2] [--timesteps N] [--params-version v0] [--strict]
+python -m src.slingpuck.train.train_goalkeeper [--seeds 0 1 2] [--timesteps N] [--params-version v0] [--strict]
 ```
 
 - Hyperparameters: `configs/train_goalkeeper.yaml` (PPO, 8 subprocess envs,
@@ -409,7 +420,7 @@ python -m slingpuck.train.train_goalkeeper [--seeds 0 1 2] [--timesteps N] [--pa
 ### Evaluation
 
 ```bash
-python -m slingpuck.eval.save_rate_vs_speed --runs <run_dir> [<run_dir> ...] \
+python -m src.slingpuck.eval.save_rate_vs_speed --runs <run_dir> [<run_dir> ...] \
     [--episodes-per-bin 300] [--n-speed-bins 6] [--release-delay 0.0] [--nominal]
 ```
 
@@ -430,8 +441,8 @@ python -m slingpuck.eval.save_rate_vs_speed --runs <run_dir> [<run_dir> ...] \
 ### Viewer
 
 ```bash
-python -m slingpuck.eval.visualize_goalkeeper --run <run_dir>            # live window
-python -m slingpuck.eval.visualize_goalkeeper --policy center --save gk.gif
+python -m src.slingpuck.eval.visualize_goalkeeper --run <run_dir>            # live window
+python -m src.slingpuck.eval.visualize_goalkeeper --policy center --save gk.gif
 ```
 
 A top-down slow-motion view (default 10 times slower). It shows the true puck

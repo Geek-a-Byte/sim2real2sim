@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from slingpuck.physics.servo_model import ServoModel
+from src.slingpuck.physics.servo_model import ServoModel
 
 DT = 0.01
 

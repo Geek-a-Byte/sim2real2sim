@@ -7,20 +7,19 @@ Shows what the sim does and what the policy sees:
 
 Examples:
     # Trained run, live window
-    python -m slingpuck.eval.visualize_goalkeeper --run logs/goalkeeper/goalkeeper_v0_s0_<stamp>
+    python -m src.slingpuck.eval.visualize_goalkeeper --run logs/goalkeeper/goalkeeper_v0_s0_<stamp>
     # Scripted baseline, fast shot, save a GIF
-    python -m slingpuck.eval.visualize_goalkeeper --policy center --speed 2.8 --save gk.gif
+    python -m src.slingpuck.eval.visualize_goalkeeper --policy center --speed 2.8 --save gk.gif
 """
 import argparse
 from pathlib import Path
 
 import matplotlib
 import numpy as np
-import yaml
 
-from slingpuck.config import load_config
-from slingpuck.policies.scripted import CenterBlocker, HoldStart
-from slingpuck.train.common import make_goalkeeper_env
+from src.slingpuck.config import load_config
+from src.slingpuck.policies.scripted import CenterBlocker, HoldStart
+from src.slingpuck.train.common import load_trained_run, make_goalkeeper_env
 
 # Reference palette (dataviz skill), light mode.
 SURFACE, INK, INK_2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9"
@@ -31,11 +30,8 @@ OUTCOME_TEXT = {"save": "SAVE", "goal": "GOAL", "none": "no threat", None: ""}
 
 def load_policy(args):
     if args.run:
-        from stable_baselines3 import PPO
-        run = Path(args.run)
-        run_cfg = yaml.safe_load((run / "run_config.yaml").read_text())
-        model = PPO.load(run / "final_model.zip", device="cpu")
-        return model, run_cfg["train"]["policy"] == "asymmetric", run.name
+        model, asymmetric, _ = load_trained_run(args.run)
+        return model, asymmetric, Path(args.run).name
     policy = {"center": CenterBlocker, "hold": HoldStart}[args.policy]()
     return policy, False, f"scripted: {args.policy}"
 

@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from slingpuck.envs.wrappers import PrivilegedObsWrapper
-from slingpuck.policies.scripted import CenterBlocker, HoldStart
+from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
+from src.slingpuck.policies.scripted import CenterBlocker, HoldStart
 
 
 def rollout(env, policy, **reset_kw):
@@ -130,7 +130,7 @@ def test_long_release_delay_ends_at_first_step(cfg):
 def test_viewer_records_and_saves_gif(cfg, tmp_path):
     import matplotlib
     matplotlib.use("Agg")
-    from slingpuck.eval.visualize_goalkeeper import animate, record_episode
+    from src.slingpuck.eval.visualize_goalkeeper import animate, record_episode
     env = GoalkeeperEnv(cfg)
     frames, info = record_episode(env, CenterBlocker(), seed=0, options={"speed": 2.0}, frame_dt=0.01)
     assert frames and frames[-1]["outcome"] == info["outcome"]

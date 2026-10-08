@@ -2,7 +2,7 @@ import time
 import numpy as np
 import onnxruntime as ort
 
-from slingpuck.kinematics import GoalkeeperGeometry
+from src.slingpuck.kinematics import GoalkeeperGeometry
 # from lerobot.hardware.motor import STS3215Bus # Conceptual LeRobot hardware interface
 
 class SO101Controller:

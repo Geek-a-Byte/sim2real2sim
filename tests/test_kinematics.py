@@ -3,7 +3,7 @@ import copy
 import numpy as np
 import pytest
 
-from slingpuck.kinematics import GoalkeeperGeometry
+from src.slingpuck.kinematics import GoalkeeperGeometry
 
 
 def test_action_mapping_range_and_inverse(cfg):
@@ -39,6 +39,6 @@ def test_rejects_paddle_outside_board(cfg):
 def test_robot_stub_uses_shared_mapping():
     import inspect
 
-    from slingpuck.deploy import lerobot_interface
+    from src.slingpuck.deploy import lerobot_interface
     src = inspect.getsource(lerobot_interface.SO101Controller.write_action)
     assert "self.geom.pan_to_joint(self.geom.action_to_pan(" in src

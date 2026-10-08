@@ -9,7 +9,7 @@ the estimate lags for a few frames after a bounce.
 """
 import numpy as np
 
-from slingpuck.sensing.camera_model import Frame
+from src.slingpuck.sensing.camera_model import Frame
 
 _H = np.array([[1.0, 0.0, 0.0, 0.0],
                [0.0, 1.0, 0.0, 0.0]])

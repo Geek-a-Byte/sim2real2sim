@@ -1,6 +1,6 @@
 import numpy as np
 
-from slingpuck.physics.band_model import ElasticBand
+from src.slingpuck.physics.band_model import ElasticBand
 
 # TODO(M3): replace with nonlinear-stiffness tests and a closed-hysteresis-loop test.
 
