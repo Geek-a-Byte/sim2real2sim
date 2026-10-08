@@ -633,3 +633,174 @@ DESC = {
     "deploy/lerobot_interface.py::SO101Controller.__init__": "Load the ONNX actor, the shared geometry and the limits.",
     "deploy/lerobot_interface.py::SO101Controller.run_loop": "Sense, infer, act, sleep to keep the control rate.",
 }
+
+# ------------------------------------------------------------------- figures
+# (file in docs/figures, title, what it shows, how to read it, what we see)
+FIGURES = [
+    ("train_goalkeeper.png", "Phase 1 training curves (goalkeeper PPO, 3 seeds, 1M steps each)",
+     "The save rate and the mean episode reward of the training episodes, logged once per PPO rollout "
+     "(4,096 steps). Thin lines are the raw values; thick lines are a 9-rollout moving average. One color per seed.",
+     "Higher is better. The training episodes include exploration noise and domain randomization, so they are "
+     "lower than the deterministic eval. The reward is +1 save, -1 goal, minus a small smoothness penalty.",
+     "All seeds learn in the first ~50k steps: the save rate goes from about 60% to about 84% and then stays level "
+     "for the rest of the 1M steps. The three seeds are almost the same, which agrees with the eval finding that "
+     "all seeds learned the same saturated 'command the far side' policy. The plateau is set by physics (fast shots "
+     "from a far start cannot be reached), not by training. Most of the 1M steps were not needed."),
+    ("train_sling.png", "Phase 2 training curves (sling PPO, 3 seeds, 400k steps each)",
+     "Gate success rate and mean episode reward of the training episodes per rollout (2,048 steps).",
+     "The reward is +1 for a gate pass plus up to 0.3 shaping for a near miss, so the maximum is about 1.3.",
+     "An S-shaped learning curve: almost no success for the first ~80k steps (the gate is a +-3 mm target), then a "
+     "steady rise as the policy learns to slide the puck to the center, and a plateau at about 92% after ~350k "
+     "steps. Seed 2 learns about 20k steps later but reaches the same level. While successes are rare, the "
+     "near-miss shaping term gives most of the reward and so the early learning signal."),
+    ("train_original.png", "Training curve of the original code (before the rework)",
+     "Mean episode reward of the single goalkeeper PPO run that existed when the project was handed over.",
+     "This run used the original env (0.6 x 0.3 m board, 5 cm gate, stale camera frames, a ground-truth fallback, "
+     "and a paddle 'save' even for shots that would miss).",
+     "The reward reaches about 0.97, which looks very good, but the env had the bugs listed in section 3, so the "
+     "number is not valid. It is kept for comparison only."),
+    ("save_rate_2d.png", "Phase 1 evaluation on 2D physics",
+     "Left: save rate vs incoming puck speed (6 bins, 300 threatening shots per bin). Right: save rate vs the paddle "
+     "start offset (fraction of the pan range). Blue: PPO (3 seeds), orange: scripted 'go to center', aqua: "
+     "'never move'. Bands are 95% CIs.",
+     "Every policy faces the same shots (paired seeds). The 'never move' line is the lower bound: it saves only "
+     "shots that hit a paddle that happens to start near the center.",
+     "All policies save everything below ~1.5 m/s. Above that the save rate falls because the paddle cannot reach "
+     "the gate in time from far starts (right panel: 'never move' drops to 0% beyond half the range). PPO is 3-8 "
+     "points better than 'go to center' at 1.5-3.0 m/s because it commands the far side of the range, which makes "
+     "the first-order lag of the 2D servo model move faster."),
+    ("servo_step.png", "Pan step response: 2D servo model vs MuJoCo arm",
+     "The pan angle after a command from +20 deg to 0 deg (no command latency) in the 2D ServoModel (blue) and on "
+     "the MuJoCo SO-101 with the paddle (orange). The dashed line is 50% of the move.",
+     "The time to cross the dashed line is the useful reaction time for a goalkeeper.",
+     "The 2D model starts at full speed at once (first-order lag) and reaches 50% in about 37 ms; it stops 0.5 deg "
+     "short because of the deadband. The MuJoCo arm accelerates slowly (torque limit and inertia), reaches 50% in "
+     "about 81 ms, overshoots to about -3 deg and rings for ~150 ms. This difference explains the sim-to-sim gap."),
+    ("mujoco_scene.png", "The MuJoCo scene",
+     "Side and gate camera views of the SO-101 holding the paddle in front of the gate, on the real-size board.",
+     "Orange box: the paddle (a custom mount on the gripper). Black: the puck.",
+     "The scene is built from the same config as the 2D sim, so the board, gate and paddle arc are identical."),
+    ("viewer_2d.png", "2D viewer frames (one Phase 1 episode, slow motion)",
+     "Three frames of the top-down viewer: before the launch (paddle locked, faded), during the flight, and the "
+     "save. Filled black: true puck; blue x: last camera frame; blue ring with line: Kalman estimate and velocity.",
+     "Time is shown relative to the launch. The shot is 1.5 m/s with the paddle starting at 90% of its range.",
+     "The paddle reaches the gate just in time and saves. The Kalman ring is far behind the puck at +29 and +85 ms: "
+     "with 50 ms latency only one or two frames after the launch have arrived, and the constant-velocity filter "
+     "reacts slowly to a launch from rest."),
+    ("viewer_3d.png", "3D MuJoCo viewer frames (the same shot)",
+     "Four frames from the gate camera for the same shot as above, on MuJoCo physics.",
+     "The blue disk is the Kalman estimate; the black puck is the truth.",
+     "With the slower MuJoCo arm the same shot is a goal (the puck passes the gate in the last frame), while the "
+     "2D sim saves it. One example of the sim-to-sim gap."),
+    ("save_rate_mujoco.png", "Phase 1 evaluation on MuJoCo physics (sim-to-sim)",
+     "The same eval as on 2D physics, with the same trained policies, on MuJoCo.",
+     "Compare each line with the 2D figure.",
+     "All policies lose 20-40 points above 1.2 m/s. PPO is never better than 'go to center' and is worse at slow "
+     "speeds (89.6% vs 98.0%): the far-side command gives no extra speed on a torque-limited arm and makes the "
+     "paddle overshoot past the gate. The 2D gain was a property of the 2D servo model."),
+    ("band_loop.png", "Band force: the closed hysteresis loop",
+     "Band force on the puck vs the center pull, for the synthetic 'true' band: loading (pull back, blue) and "
+     "unloading (release, orange) model curves, with the synthetic force-gauge readings (dots, triangles).",
+     "The area between the curves is the energy lost per cycle. Both curves start and end at the same points.",
+     "The loop closes at 0 and at the maximum pull, as the plan required. The force reaches ~8 N at 30 mm. The fit "
+     "recovers this band from the gauge readings (stiffness 236 vs 230 N/m, hysteresis 0.220 vs 0.22)."),
+    ("hole_rate.png", "Phase 2 evaluation: gate success",
+     "Left: running success rate vs shot count (log scale, from 10 shots) with 95% Wilson bands. Right: success by "
+     "the puck's start position on the band (|x| bins).",
+     "The running rate shows how many shots are needed for a stable estimate. All policies use the same shots.",
+     "PPO 94.6%, slide + camera correction 93.8%, slide to center 92.5%. The rates settle after ~200 shots. Success "
+     "does not depend on the start position, because the slide removes the start offset. The remaining misses "
+     "come from the release scatter and the placement noise (placeholders)."),
+    ("parity_synthetic.png", "Sysid parity on synthetic logs",
+     "Left: reliability diagram (sim-predicted success probability vs logged success) for v0 and the fitted v1. "
+     "Right: transit-time bias (sim minus logged) with 95% CI.",
+     "On the left, points on the dashed line mean perfect agreement. On the right, a CI that contains 0 means no "
+     "detectable speed error.",
+     "The success comparison cannot separate v0 from v1 with 65 shots (Brier 0.136 vs 0.140): the outcome depends "
+     "on the lateral aim, not on the speed. The transit time can: v0 is 9.5 ms too fast, the fitted v1 agrees "
+     "(+0.7 ms, CI contains 0)."),
+    ("block_table.png", "Frozen block primitive table (Phase 3 input)",
+     "Measured save probability for a paddle that starts at the edge of its range (just back from the band), by "
+     "shot speed and by how late the arm is free after the launch. Darker = more saves; blank cells are below 5%.",
+     "A paddle already settled at the gate saves 100% at every speed (not shown in the grid).",
+     "The vulnerability window in numbers: from the edge, only slow shots can be stopped (1.0 m/s: 100% with no "
+     "delay, below 50% after ~75 ms), and almost nothing above 2 m/s. So the gate is safe only if the arm is "
+     "settled before a fast threat launches."),
+    ("match_baselines.png", "Phase 3 evaluation: scripted selectors",
+     "Win rate (left) and mean puck difference sent - received per match (right) with 95% CIs, 400 matches each.",
+     "Each policy keeps a fixed color in every Phase 3 chart.",
+     "Greedy slinging wins most (33%). The plan's reload rule loses 67% of matches, even with the true opponent "
+     "phase (oracle). The tell rule is between them. Always blocking never wins or loses (0 pucks move)."),
+    ("match_tell_sweep.png", "Phase 3: tell_strength sweep",
+     "Win rate and puck difference vs the opponent's tell_strength for three policies (300 matches per point).",
+     "Only the tell rule uses the hand x, so only its line can change with the tell.",
+     "The tell rule is always better than the reload rule, but its gain does not grow clearly with the tell: a "
+     "sling keeps the arm away for ~3.1 s (about 2.5 opponent shots), and the tell only says something about the "
+     "current shot."),
+]
+
+# --------------------------------------------------------------- constraints
+CONSTRAINTS = [
+    ("No real hardware data", "There were no measurements from the real SO-101, board or band. 33 values are "
+     "placeholders; all results are simulation results and must be repeated with measured values. Sysid was "
+     "tested only on synthetic logs."),
+    ("Incomplete and inconsistent board data", "Board sizes came from an Amazon listing; the 'size M' text and the "
+     "'size S' image disagree. The gate width is only known as 'a little over 1.19 in'. The measured puck mass "
+     "(27 g) gives an implausible density for wood and may be the mass of 6 pucks."),
+    ("Unknown game rules and timings", "The scoring rules, the robot's fetch/sling/move times and the human "
+     "opponent's timing are unknown. Phase 3 results depend strongly on them, so they could only be shown as a "
+     "regime map, not as an answer."),
+    ("CPU-only laptop", "All training ran on a laptop CPU (no GPU). Phase 1 PPO took 15-40 min per 1M-step seed "
+     "(slower when other jobs shared the CPU). Background jobs in this session stop after a time limit; one 3-seed "
+     "run was stopped after seed 1 and seed 2 had to be restarted."),
+    ("Short episodes", "On the real-size board a puck reaches the gate in ~100 ms (about 3 control steps), so most "
+     "training time is spent in reset (pre-launch period, threat sampling), not in learning."),
+    ("A very narrow gate", "The gate is ~1.5 mm wider than the puck. This made 'go to center' optimal for a "
+     "goalkeeper with time, forced the recovery-task design, and makes Phase 2 a +-3 mm aiming problem."),
+    ("Physics of the band", "With a pre-stretched band and short pulls, the pull angle cannot aim the puck. The "
+     "plan's 2-D action had to be changed to include placement."),
+    ("MuJoCo contact behavior", "A free puck tumbled; contact friction on a soft floor made the puck hop; the "
+     "(timeconst, dampratio) contact form was unstable for low damping at a 1 ms step (a 1.5 m/s hit came back at "
+     "6.4 m/s). Restitution also depends on the impact phase. Solved with a planar puck, an applied friction force, "
+     "direct stiffness/damping, a 0.5 ms step and calibration in the real scene."),
+    ("Arm geometry", "The SO-101's pitch joints move the fingertips in a plane ~1 mm beside the pan axis, so the "
+     "inverse kinematics cannot reach the exact target; a custom paddle mount absorbs the offset. The real end "
+     "effector and its mount are not known."),
+    ("Camera at 60 Hz with 50 ms latency", "A flight to the gate lasts ~70 ms, so only ~5 frames per segment are "
+     "available for sysid and the tracker barely sees a fast shot before it arrives. This limited the tracker and "
+     "caused a selection bias in the first flight fit."),
+    ("Parameters that cannot be separated", "Band stiffness, exponent and natural length trade off in the bench "
+     "data; hysteresis and energy transfer both scale the launch speed; camera latency needs a sync event. These "
+     "need extra measurements (ruler, bench test, LED)."),
+    ("Software environment", "Two Pythons on the machine (Homebrew 3.10 as the 'python' alias, without scipy and "
+     "pytest; miniconda 3.14 with everything). The package import path changed to src.slingpuck during the project, "
+     "and saved models store their class path, which needed a custom loader. The live MuJoCo window needs mjpython "
+     "on macOS. No display was available in the session, so live windows could not be tested; GIFs were used. "
+     "reportlab was not installed, so this PDF is printed with headless Chrome."),
+    ("Old code", "The original code ran but had invalid results (sign error, missing goals, mapping mismatch, "
+     "stale frames, ground-truth fallback, unseeded randomness). M1 had to rebuild the base before new work."),
+]
+
+# -------------------------------------------------------------- improvements
+IMPROVEMENTS = [
+    ("High", "Measure the real pan step response and replace the first-order ServoModel with a second-order, "
+     "torque-limited model (or train Phase 1 in MuJoCo)", "The 2D/MuJoCo gap shows that the servo model decides "
+     "the Phase 1 result; PPO's 2D advantage did not transfer."),
+    ("High", "Get the real scoring rules and robot/human timings, then re-run Phase 3", "The Phase 3 conclusion "
+     "(a throughput race) may change completely."),
+    ("High", "Run sysid on real logs (band bench, servo steps, shots) and use the fitted version for all training",
+     "Every number in this report uses placeholders."),
+    ("Medium", "Add launch (maneuver) detection to the Kalman tracker and a bounce-aware prediction",
+     "The estimate is ~10 cm behind 80 ms after a launch; Phase 3 decisions need a good early estimate."),
+    ("Medium", "Speed up Phase 1 training (shorter pre-launch, fast-forward the locked period, cheaper threat "
+     "sampling) and stop earlier", "Training plateaus at ~50k of 1M steps."),
+    ("Medium", "Add pan-encoder noise and quantization to the observations; randomize servo rate and lag in "
+     "MuJoCo", "Closer to the real sensors; robustness."),
+    ("Medium", "Phase 2: model the puck radius in the band geometry and lateral arm deflection; measure the noise "
+     "values with ~30 repeated shots", "The miss rate is set by these values."),
+    ("Medium", "Phase 3: replace the fixed fetch time with puck positions; resolve several pucks at the gate; "
+     "build the block table from the trained goalkeeper", "Higher fidelity of the match model."),
+    ("Low", "Add a scripted 'overshoot' baseline to the Phase 1 eval", "Explains PPO's 2D gain as a baseline."),
+    ("Low", "PyBullet backend (the interface is ready), if still wanted", "MuJoCo already covers the arm."),
+    ("Low", "Packaging: one Python environment, a lock file, CI that runs the tests", "Fewer setup problems."),
+]

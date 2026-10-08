@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "docs"))
 
-from report_content import DESC, FILES  # noqa: E402
+from report_content import CONSTRAINTS, DESC, FIGURES, FILES, IMPROVEMENTS  # noqa: E402
 
 from src.slingpuck.config import load_config  # noqa: E402
 
@@ -166,6 +166,160 @@ def placeholders_html(cfg) -> str:
     return f'<p>{len(items)} values are still placeholders in v0:</p><ul class="cols">{cells}</ul>'
 
 
+RESULTS = ROOT / "results"
+
+
+def read_csv(path):
+    import csv
+    with open(path) as f:
+        return list(csv.DictReader(f))
+
+
+def pct(x):
+    return "&ndash;" if x in ("", "nan") or x != x else f"{float(x):.1%}"
+
+
+def ci(r, lo="ci_lo", hi="ci_hi"):
+    return f"{pct(r[lo])} [{pct(r[lo]).rstrip('%')}&ndash;{pct(r[hi])}]".replace(f"{pct(r[lo])} [", "[")
+
+
+def rate_ci(r, key="save_rate", lo="ci_lo", hi="ci_hi"):
+    return f"<b>{pct(r[key])}</b> <span class=dim>[{float(r[lo]):.1%}, {float(r[hi]):.1%}]</span>"
+
+
+def figures_html() -> str:
+    parts = []
+    for i, (name, title, what, read, see) in enumerate(FIGURES, 1):
+        parts.append(f'<div class="figblock"><h3>Figure {i}. {E(title)}</h3>'
+                     f'<figure><img src="../figures/{name}"/></figure>'
+                     f'<p><span class="label">What it shows.</span> {E(what)}</p>'
+                     f'<p><span class="label">How to read it.</span> {E(read)}</p>'
+                     f'<p><span class="label">What we see.</span> {E(see)}</p></div>')
+    return "\n".join(parts)
+
+
+def phase1_tables() -> str:
+    out = []
+    for backend in ("2d", "mujoco"):
+        rows = read_csv(RESULTS / "goalkeeper" / f"m2_final_{backend}" / "save_rate_vs_speed.csv")
+        bins = sorted({(float(r["bin_lo"]), float(r["bin_hi"])) for r in rows})
+        body = ""
+        for lo, hi in bins:
+            cells = []
+            for pol in ("ppo", "center", "hold"):
+                r = next(r for r in rows if r["policy"] == pol and float(r["bin_lo"]) == lo)
+                cells.append(f"<td>{rate_ci(r)}</td>")
+            body += f"<tr><td>{lo:.2f}&ndash;{hi:.2f}</td>{''.join(cells)}</tr>"
+        name = "2D physics" if backend == "2d" else "MuJoCo physics (sim-to-sim)"
+        out.append(f"<h3>Phase 1 save rate vs speed, {name}</h3><table><tr><th>Speed (m/s)</th>"
+                   f"<th>PPO (3 seeds)</th><th>Go to center</th><th>Never move</th></tr>{body}</table>")
+    # Time-to-cover grid of the center policy, 2D vs MuJoCo
+    grids = {b: read_csv(RESULTS / "goalkeeper" / f"m2_final_{b}" / "save_rate_grid.csv") for b in ("2d", "mujoco")}
+    offs = sorted({(float(r["start_offset_lo"]), float(r["start_offset_hi"])) for r in grids["2d"]})
+    speeds = sorted({(float(r["speed_lo"]), float(r["speed_hi"])) for r in grids["2d"]})
+    head = "".join(f"<th>{a:.2f}&ndash;{b:.2f}</th>" for a, b in offs)
+    body = ""
+    for slo, shi in speeds:
+        cells = ""
+        for olo, _ in offs:
+            v = [next(r for r in grids[b] if r["policy"] == "center" and float(r["speed_lo"]) == slo
+                      and float(r["start_offset_lo"]) == olo)["save_rate"] for b in ("2d", "mujoco")]
+            cells += f"<td>{pct(v[0])} / {pct(v[1])}</td>"
+        body += f"<tr><td>{slo:.2f}&ndash;{shi:.2f}</td>{cells}</tr>"
+    out.append("<h3>Phase 1 time-to-cover grid ('go to center'): 2D / MuJoCo</h3>"
+               "<p>Save rate by shot speed (rows) and paddle start offset as a fraction of the pan range (columns). "
+               "This is the table Phase 3 needs; note how much lower MuJoCo is for far starts.</p>"
+               f"<table><tr><th>Speed (m/s)</th>{head}</tr>{body}</table>")
+    return "\n".join(out)
+
+
+def phase2_tables() -> str:
+    rows = read_csv(RESULTS / "sling" / "m3_final" / "success_summary.csv")
+    names = {"ppo": "PPO (3 seeds)", "center": "Slide to center", "center_correct": "Slide + camera correction"}
+    bins = [(r["abs_x0_lo"], r["abs_x0_hi"]) for r in rows if r["policy"] == "ppo"]
+    head = "".join("<th>All starts</th>" if lo == "all" else f"<th>|x0| {float(lo)*1000:.0f}&ndash;{float(hi)*1000:.0f} mm</th>"
+                   for lo, hi in bins)
+    body = ""
+    for pol in ("ppo", "center_correct", "center"):
+        cells = "".join(f"<td>{rate_ci(r, 'success_rate')}</td>" for r in rows if r["policy"] == pol)
+        body += f"<tr><td>{names[pol]}</td>{cells}</tr>"
+    out = [f"<h3>Phase 2 gate success (1000 shots per policy and seed)</h3><table><tr><th>Policy</th>{head}</tr>{body}</table>"]
+    par = read_csv(RESULTS / "sling" / "m3_parity_synthetic" / "parity_summary.csv")
+    body = "".join(
+        f"<tr><td>{r['version']}</td><td>{pct(r['observed_rate'])}</td><td>{pct(r['predicted_rate'])}</td>"
+        f"<td>{float(r['brier']):.3f}</td><td>{float(r['transit_bias_ms']):+.1f} ms "
+        f"[{float(r['transit_bias_ci_lo']):+.1f}, {float(r['transit_bias_ci_hi']):+.1f}]</td>"
+        f"<td>{float(r['transit_rmse_ms']):.1f} ms</td></tr>" for r in par)
+    out.append("<h3>Sysid parity on synthetic logs (65 shots, 40 sim replays each)</h3><table><tr><th>Params</th>"
+               "<th>Logged success</th><th>Sim success</th><th>Brier</th><th>Transit bias (sim &minus; logged)</th>"
+               f"<th>Transit RMSE</th></tr>{body}</table>")
+    out.append("""<h3>Sysid recovery on synthetic logs (seed 0)</h3>
+<table><tr><th>Parameter</th><th>v0</th><th>Truth</th><th>Fit &plusmn; standard error</th></tr>
+<tr><td>Band stiffness (N/m)</td><td>200</td><td>230</td><td>236 &plusmn; 6</td></tr>
+<tr><td>Band exponent</td><td>1.0</td><td>1.2</td><td>1.18 &plusmn; 0.02</td></tr>
+<tr><td>Hysteresis loss</td><td>0.15</td><td>0.22</td><td>0.220 &plusmn; 0.002</td></tr>
+<tr><td>Servo latency (s)</td><td>0.030</td><td>0.042</td><td>0.042</td></tr>
+<tr><td>Servo lag &tau; (s)</td><td>0.050</td><td>0.065</td><td>0.065</td></tr>
+<tr><td>Servo max rate (deg/s)</td><td>300</td><td>250</td><td>255 (2% high, encoder quantization)</td></tr>
+<tr><td>Servo deadband (deg)</td><td>0.5</td><td>0.4</td><td>0.40</td></tr>
+<tr><td>Compliance (m/N)</td><td>0.0010</td><td>0.0014</td><td>0.00142 &plusmn; 0.00003</td></tr>
+<tr><td>Friction &mu;</td><td>0.20</td><td>0.24</td><td>0.240 &plusmn; 0.005</td></tr>
+<tr><td>Wall restitution</td><td>0.85</td><td>0.78</td><td>0.80 &plusmn; 0.02</td></tr>
+<tr><td>Energy transfer</td><td>0.70</td><td>0.62</td><td>0.614 &plusmn; 0.009</td></tr></table>
+<p>Over 6 synthetic data sets, all shot-fitted values were within about one standard error of the truth.</p>""")
+    return "\n".join(out)
+
+
+def phase3_tables() -> str:
+    rows = read_csv(RESULTS / "match" / "m4_baselines" / "match_summary.csv")
+    body = "".join(
+        f"<tr><td>{r['policy']}</td><td>{rate_ci(r, 'win_rate', 'win_ci_lo', 'win_ci_hi')}</td>"
+        f"<td>{pct(r['loss_rate'])}</td><td>{pct(r['time_rate'])}</td>"
+        f"<td>{float(r['diff_mean']):+.2f} [{float(r['diff_ci_lo']):+.2f}, {float(r['diff_ci_hi']):+.2f}]</td>"
+        f"<td>{float(r['slings_per_match']):.1f}</td><td>{float(r['conceded_while_away_per_match']):.1f}</td>"
+        f"<td>{pct(r['save_rate'])}</td></tr>" for r in rows)
+    out = ["<h3>Phase 3 scripted selectors (400 matches each, tell_strength 0.8)</h3><table><tr><th>Policy</th>"
+           "<th>Win</th><th>Loss</th><th>Time-out</th><th>Sent &minus; received</th><th>Slings / match</th>"
+           f"<th>Conceded while away / match</th><th>Save rate</th></tr>{body}</table>"]
+    sweep = read_csv(RESULTS / "match" / "m4_tell_sweep" / "match_summary.csv")
+    tells = sorted({float(r["tell_strength"]) for r in sweep})
+    head = "".join(f"<th>tell {t:.2f}</th>" for t in tells)
+    body = ""
+    for pol in dict.fromkeys(r["policy"] for r in sweep):
+        cells = "".join(
+            f"<td>{pct(r['win_rate'])} / {float(r['diff_mean']):+.1f}</td>"
+            for t in tells for r in sweep if r["policy"] == pol and float(r["tell_strength"]) == t)
+        body += f"<tr><td>{pol}</td>{cells}</tr>"
+    out.append("<h3>Phase 3 tell_strength sweep (300 matches per cell): win rate / puck difference</h3>"
+               f"<table><tr><th>Policy</th>{head}</tr>{body}</table>")
+    out.append("""<h3>Phase 3 regime maps (scripted policies, quick runs)</h3>
+<p>Opponent speed and accuracy (150 matches per cell; win rate W, loss rate L):</p>
+<table><tr><th>Opponent reload, threat probability</th><th>Greedy sling</th><th>Reload rule</th><th>Tell rule</th><th>Oracle reload</th></tr>
+<tr><td>0.3 s, 0.5</td><td>W 0.06 / L 0.69</td><td>W 0.00 / L 0.97</td><td>W 0.00 / L 0.90</td><td>W 0.00 / L 0.99</td></tr>
+<tr><td>0.6 s, 0.5 (default)</td><td>W 0.33 / L 0.11</td><td>W 0.03 / L 0.59</td><td>W 0.17 / L 0.40</td><td>W 0.01 / L 0.63</td></tr>
+<tr><td>1.0 s, 0.5</td><td>W 0.90 / L 0.01</td><td>W 0.22 / L 0.13</td><td>W 0.63 / L 0.03</td><td>W 0.24 / L 0.14</td></tr>
+<tr><td>0.6 s, 0.8</td><td>W 0.00 / L 0.99</td><td>W 0.00 / L 1.00</td><td>W 0.00 / L 1.00</td><td>W 0.00 / L 1.00</td></tr>
+<tr><td>1.0 s, 0.8</td><td>W 0.01 / L 0.57</td><td>W 0.00 / L 1.00</td><td>W 0.00 / L 0.96</td><td>W 0.00 / L 0.98</td></tr></table>
+<p>Robot speed (move, fetch and sling times scaled by f; 300 matches per cell; win rate, save rate):</p>
+<table><tr><th>f (sling-and-return cycle)</th><th>Greedy</th><th>Reload rule</th><th>Tell rule, tell 0</th><th>Tell rule, tell 1</th></tr>
+<tr><td>1.0 (3.1 s)</td><td>33%, 0%</td><td>5%, 2%</td><td>11%, 0%</td><td>10%, 1%</td></tr>
+<tr><td>0.5 (1.6 s)</td><td>100%, 0%</td><td>100%, 5%</td><td>100%, 2%</td><td>100%, 3%</td></tr>
+<tr><td>0.3 (0.9 s)</td><td>100%, 0%</td><td>100%, 30%</td><td>100%, 7%</td><td>100%, 14%</td></tr></table>
+<p>Under the placeholder rule "first empty side wins", the match is a throughput race: when the robot is
+faster than the opponent's threat rate, every strategy wins; when it is slower, defending does not pay.</p>""")
+    return "\n".join(out)
+
+
+def constraints_html() -> str:
+    return "<table><tr><th>Constraint</th><th>Effect on the project and how it was handled</th></tr>" + "".join(
+        f"<tr><td><b>{E(t)}</b></td><td>{E(d)}</td></tr>" for t, d in CONSTRAINTS) + "</table>"
+
+
+def improvements_html() -> str:
+    return "<table><tr><th>Priority</th><th>Improvement</th><th>Why</th></tr>" + "".join(
+        f"<tr><td>{E(pr)}</td><td>{E(what)}</td><td>{E(why)}</td></tr>" for pr, what, why in IMPROVEMENTS) + "</table>"
+
+
 def fig(name, caption, width="100%"):
     return (f'<figure><img src="../figures/{name}" style="width:{width}"/>'
             f"<figcaption>{E(caption)}</figcaption></figure>")
@@ -269,6 +423,8 @@ def build_html() -> str:
     table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; font-size: 9pt; page-break-inside: auto; }
     th, td { border-bottom: 1px solid #e1e0d9; padding: 3px 5px; text-align: left; vertical-align: top; }
     th { background: #f4f3ef; } tr { page-break-inside: avoid; }
+    table { page-break-inside: avoid; } table.api { page-break-inside: auto; }
+    h3 + table, h3 + p + table { page-break-before: avoid; }
     table.api td.kind { color: #898781; width: 48px; font-size: 8pt; }
     table.api tr.method td:nth-child(2) code { color: #3a3a3a; }
     table.api code.sig { background: none; color: #52514e; font-size: 7.8pt; }
@@ -286,6 +442,9 @@ def build_html() -> str:
     .box { background: #f6f8fc; border-left: 4px solid #2a78d6; padding: 6px 10px; margin: 8px 0; page-break-inside: avoid; }
     .warn { background: #fdf3ec; border-left: 4px solid #eb6834; padding: 6px 10px; margin: 8px 0; page-break-inside: avoid; }
     .toc li { margin: 2px 0; }
+    .figblock { page-break-inside: avoid; margin-bottom: 14px; }
+    .figblock p { margin: 3px 0; } .figblock .label { display: inline; }
+    .dim { color: #898781; font-size: 8pt; }
     """
 
     body = f"""
@@ -304,8 +463,11 @@ def build_html() -> str:
 <h2>Contents</h2>
 <ol class="toc">
   <li>Summary</li><li>Status and history</li><li>Key decisions and findings</li>
-  <li>How the system fits together</li><li>Configuration files</li><li>Results</li>
+  <li>How the system fits together</li><li>Configuration files</li>
+  <li>Figures explained (training curves, evaluation curves, models, viewers)</li>
+  <li>Evaluation results (tables)</li>
   <li>Code reference: every file, class and function</li><li>Tests</li><li>How to run</li>
+  <li>Constraints and difficulties faced</li><li>What can still be improved</li>
   <li>What is still to do</li><li>Glossary</li>
 </ol>
 
@@ -418,30 +580,31 @@ number of envs, steps and seeds.</td></tr></table>
 </div>
 
 <div class="section">
-<h2>6. Results</h2>
-<h3>Phase 1: goalkeeper, 2D physics (3 PPO seeds, 300 shots per speed bin)</h3>
-{fig("save_rate_2d.png", "Save rate vs puck speed and vs paddle start offset. PPO beats 'go to center' in 2D through a servo-lag trick.")}
-<h3>Phase 1: the same policies on MuJoCo physics (sim-to-sim)</h3>
-{fig("mujoco_scene.png", "MuJoCo scene: SO-101 holding the paddle at the gate (side and gate cameras).", "80%")}
-{fig("save_rate_mujoco.png", "On MuJoCo all policies lose 20-40 points above 1.2 m/s, and PPO is no better than 'go to center'.")}
-<h3>Phase 2: targeted shot (1000 shots per policy and seed)</h3>
-{fig("hole_rate.png", "PPO 94.6%, slide + camera correction 93.8%, slide to center 92.5%.")}
-<h3>Sysid parity on synthetic logs</h3>
-{fig("parity_synthetic.png", "Outcome parity cannot separate v0 from the fit; transit time can: v0 is 9.5 ms too fast, the fit agrees.")}
-<h3>Phase 3: scripted selectors (400 matches each)</h3>
-{fig("match_baselines.png", "Greedy slinging wins most; the plan's reload rule loses (placeholder timings and rules).")}
-{fig("match_tell_sweep.png", "Tell sweep: the tell rule beats the reload rule, but its gain does not grow clearly with tell_strength.")}
+<h2>6. Figures explained</h2>
+<p>Every figure made during the project, in the order of the work: training curves, evaluation curves, model
+checks and viewer frames. For each: what it shows, how to read it, and what it tells us.</p>
+{figures_html()}
 </div>
 
 <div class="section">
-<h2>7. Code reference: every file, class and function</h2>
+<h2>7. Evaluation results (tables)</h2>
+<p>All numbers come from the result files in <code>results/</code> (95% confidence intervals in brackets).
+PPO intervals combine the spread across training seeds and the shot sampling; scripted policies use
+Wilson intervals. All results use placeholder physics values (v0).</p>
+{phase1_tables()}
+{phase2_tables()}
+{phase3_tables()}
+</div>
+
+<div class="section">
+<h2>8. Code reference: every file, class and function</h2>
 <p>For each file: what it is for, how it works, important notes, and a table of its classes, functions and methods
 (read from the code). Small helper functions nested inside other functions are part of their parent's description.</p>
 {code_reference_html()}
 </div>
 
 <div class="section">
-<h2>8. Tests</h2>
+<h2>9. Tests</h2>
 <p>{n_tests} tests, all passing (<code>pytest -q</code>, about 40 s). They cover the physics sanity checks the plan asked
 for (energy never increases through a bounce, the hysteresis loop closes, latency shifts signals correctly) and Gymnasium
 API compliance for every env.</p>
@@ -459,7 +622,7 @@ API compliance for every env.</p>
 </div>
 
 <div class="section">
-<h2>9. How to run</h2>
+<h2>10. How to run</h2>
 <p>Run from the project root with the miniconda Python (<code>python3</code>); the package is imported as
 <code>src.slingpuck</code>. On macOS the live MuJoCo window needs <code>mjpython</code>.</p>
 <pre>pytest -q                                                     # all tests
@@ -490,7 +653,19 @@ python docs/build_report.py</pre>
 </div>
 
 <div class="section">
-<h2>10. What is still to do</h2>
+<h2>11. Constraints and difficulties faced</h2>
+<p>The limits and problems met during the project, and how each one was handled.</p>
+{constraints_html()}
+</div>
+
+<div class="section">
+<h2>12. What can still be improved</h2>
+<p>Improvements to the parts that already exist (milestone M5 is in the next section).</p>
+{improvements_html()}
+</div>
+
+<div class="section">
+<h2>13. What is still to do</h2>
 <h3>Milestone M5</h3>
 <ul>
 <li>Train the Phase 3 selector (PPO on MatchEnv, asymmetric critic), several seeds; compare with the rule-based baselines.</li>
@@ -528,7 +703,7 @@ never blocks.</li>
 </div>
 
 <div class="section">
-<h2>11. Glossary</h2>
+<h2>14. Glossary</h2>
 <table>
 <tr><td><b>sim2real2sim</b></td><td>Train in sim, test on the real robot, use real logs to correct the sim (sysid), and train again.</td></tr>
 <tr><td><b>Placeholder</b></td><td>A config value that is not measured yet; listed under <code>placeholders:</code>; strict mode refuses it.</td></tr>

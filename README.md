@@ -205,7 +205,8 @@ src/slingpuck/
     run_sysid.py           Runs the fits, writes physics_params_v<N+1>.yaml
   deploy/                  Old ONNX export, latency benchmark, LeRobot stub (M5)
 tests/                     pytest suite
-docs/figures/              Figures used in this README
+docs/figures/              Figures used in this README and the report
+docs/slingpuck_report.pdf  Full project report (python docs/make_figures.py; python docs/build_report.py)
 logs/, tensorboard_logs/, results/, cache/   Training runs, eval outputs, primitive tables (not in git)
 ```
 
