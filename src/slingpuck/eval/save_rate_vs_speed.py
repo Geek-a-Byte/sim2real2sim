@@ -12,6 +12,7 @@ Example:
     python -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s0_* \
         --episodes-per-bin 300
 Outputs CSV tables, a PNG figure and eval_meta.yaml in results/goalkeeper/<timestamp>/.
+--backend mujoco runs the same eval on MuJoCo physics (sim-to-sim test).
 save_rate_grid.csv (speed x start offset) is the time-to-cover result that Phase 3
 uses for the vulnerability window. --release-delay sets how long after the launch
 the paddle becomes free.
@@ -37,9 +38,10 @@ from src.slingpuck.train.common import load_trained_run, make_goalkeeper_env  # 
 N_START_BINS = 4
 
 
-def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_seed, randomize, release_delay):
+def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_seed, randomize, release_delay,
+                 backend="2d"):
     """Return list of dicts: speed, start_offset (fraction of pan range), saved."""
-    env = make_goalkeeper_env(config, asymmetric)
+    env = make_goalkeeper_env(config, asymmetric, backend)
     gk = env.unwrapped
     rng = np.random.default_rng(base_seed)
     rows = []
@@ -180,6 +182,8 @@ def main():
     parser.add_argument("--n-speed-bins", type=int, default=6)
     parser.add_argument("--eval-seed", type=int, default=10_000)
     parser.add_argument("--nominal", action="store_true", help="Disable domain randomization in eval")
+    parser.add_argument("--backend", choices=["2d", "mujoco"], default="2d",
+                        help="Physics for the eval. mujoco = sim-to-sim transfer test")
     parser.add_argument("--release-delay", type=float, default=0.0,
                         help="Seconds after the launch until the paddle is free")
     parser.add_argument("--out", default=None)
@@ -199,14 +203,14 @@ def main():
         model, asymmetric, run_cfg = load_trained_run(run)
         print(f"Evaluating {run.name}")
         results["ppo"].append(run_episodes(model, config, asymmetric, speed_bins, args.episodes_per_bin,
-                                           args.eval_seed, randomize, args.release_delay))
+                                           args.eval_seed, randomize, args.release_delay, args.backend))
         run_meta.append({"run": str(run), "seed": run_cfg["meta"]["seed"],
                          "trained_params_version": run_cfg["meta"]["params_version"],
                          "git_hash": run_cfg["meta"]["git_hash"]})
     for policy in (CenterBlocker(), HoldStart()):
         print(f"Evaluating scripted baseline: {policy.name}")
         results[policy.name].append(run_episodes(policy, config, False, speed_bins, args.episodes_per_bin,
-                                                 args.eval_seed, randomize, args.release_delay))
+                                                 args.eval_seed, randomize, args.release_delay, args.backend))
 
     speed_table = summarize(results, "speed", speed_bins)
     start_bins = np.linspace(0.0, 1.0, N_START_BINS + 1)
@@ -214,13 +218,13 @@ def main():
     write_csv(out / "save_rate_vs_speed.csv", speed_table)
     write_csv(out / "save_rate_vs_start_offset.csv", start_table)
     write_csv(out / "save_rate_grid.csv", summarize_grid(results, speed_bins, start_bins))
-    subtitle = (f"params {config['meta']['params_version']}, "
-                f"{'domain-randomized' if randomize else 'nominal'} physics, "
+    subtitle = (f"{args.backend} physics, params {config['meta']['params_version']}, "
+                f"{'domain-randomized' if randomize else 'nominal'} values, "
                 f"{args.episodes_per_bin} shots per speed bin, release delay {args.release_delay * 1000:.0f} ms")
     plot(speed_table, start_table, out / "save_rate.png", subtitle)
     meta = {"eval_params_version": config["meta"]["params_version"], "randomize": randomize,
             "episodes_per_bin": args.episodes_per_bin, "eval_seed": args.eval_seed,
-            "release_delay_s": args.release_delay,
+            "release_delay_s": args.release_delay, "backend": args.backend,
             "speed_bins": speed_bins.tolist(), "runs": run_meta, **git_state()}
     (out / "eval_meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
 

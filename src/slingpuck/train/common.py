@@ -11,14 +11,21 @@ from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
 from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
 
 
-def make_goalkeeper_env(config: dict, asymmetric: bool):
-    env = GoalkeeperEnv(config)
+def make_goalkeeper_env(config: dict, asymmetric: bool, backend: str = "2d"):
+    """backend: "2d" (Fast2DPuckSim + ServoModel) or "mujoco" (MuJoCo board, puck and SO-101)."""
+    if backend == "mujoco":
+        from src.slingpuck.envs.mujoco_goalkeeper_env import MujocoGoalkeeperEnv
+        env = MujocoGoalkeeperEnv(config)
+    elif backend == "2d":
+        env = GoalkeeperEnv(config)
+    else:
+        raise ValueError(f"unknown backend {backend!r}")
     return PrivilegedObsWrapper(env) if asymmetric else env
 
 
-def goalkeeper_env_fn(config: dict, asymmetric: bool):
+def goalkeeper_env_fn(config: dict, asymmetric: bool, backend: str = "2d"):
     """Picklable env factory for SubprocVecEnv."""
-    return partial(make_goalkeeper_env, config, asymmetric)
+    return partial(make_goalkeeper_env, config, asymmetric, backend)
 
 
 def load_trained_run(run_dir, device: str = "cpu"):

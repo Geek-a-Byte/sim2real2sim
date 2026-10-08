@@ -81,9 +81,8 @@ class GoalkeeperEnv(gym.Env):
             cfg = sample_randomized(cfg, self.np_random)
         self.cfg = cfg
         self.geom = GoalkeeperGeometry.from_config(cfg)
-        self.sim = Fast2DPuckSim.from_config(cfg)
-        self._cf_sim = Fast2DPuckSim.from_config(cfg)
-        self.servo = ServoModel(cfg["servo"], self.physics_dt)
+        self._cf_sim = Fast2DPuckSim.from_config(cfg)  # Threat check always uses the fast 2D sim
+        self._build_physics(cfg)
         self.camera = CameraModel(cfg["camera"], rng=self.np_random)
         self.tracker = KalmanTracker.from_config(cfg)
         self.paddle_e = cfg["board"]["paddle_restitution"]
@@ -99,9 +98,7 @@ class GoalkeeperEnv(gym.Env):
         else:
             pan0 = float(self.np_random.uniform(-self.geom.pan_max, self.geom.pan_max))
         self.start_pan = pan0
-        self.servo.reset(pan0)
-        self.sim.reset(self.shot.start[None], np.zeros((1, 2)))
-        self.sim.set_paddle(self.geom.paddle_state(pan0, 0.0, self.paddle_e))
+        self._reset_physics(pan0, self.shot.start)
 
         self.t = 0.0
         self.steps = 0
@@ -175,15 +172,30 @@ class GoalkeeperEnv(gym.Env):
             reward += REWARD[outcome]
         return self._obs(), reward, terminated, truncated, self._info(outcome)
 
+    # Physics hooks. A subclass replaces these three to use another physics
+    # backend (see envs/mujoco_goalkeeper_env.py); the task logic stays the same.
+    def _build_physics(self, cfg: dict):
+        """Create self.sim (PuckPhysicsBackend) and self.servo (.pos, .vel, .step, .reset)."""
+        self.sim = Fast2DPuckSim.from_config(cfg)
+        self.servo = ServoModel(cfg["servo"], self.physics_dt)
+
+    def _reset_physics(self, pan0: float, puck_start: np.ndarray):
+        self.servo.reset(pan0)
+        self.sim.reset(puck_start[None], np.zeros((1, 2)))
+        self.sim.set_paddle(self.geom.paddle_state(pan0, 0.0, self.paddle_e))
+
+    def _physics_step(self, target_pan: float):
+        pan = float(self.servo.step(target_pan))
+        self.sim.set_paddle(self.geom.paddle_state(pan, float(self.servo.vel), self.paddle_e))
+        return self.sim.step(self.physics_dt)
+
     def _substep(self, target_pan: float):
         """Advance one physics step. Returns the outcome if the episode ended, else None."""
         self.t += self.physics_dt
         if not self.launched and self.t >= self.shot.prelaunch_s - 1e-12:
             self.sim.reset(self.sim.pos, self.shot.vel[None])
             self.launched = True
-        pan = float(self.servo.step(target_pan))
-        self.sim.set_paddle(self.geom.paddle_state(pan, float(self.servo.vel), self.paddle_e))
-        events = self.sim.step(self.physics_dt)
+        events = self._physics_step(target_pan)
         self.touched |= bool(events.paddle_contacts)
         self.entered |= any(c.direction == -1 for c in events.crossings)
         frames = self.camera.observe(self.t, self.sim.pos[0])
