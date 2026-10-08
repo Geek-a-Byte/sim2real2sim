@@ -1,0 +1,8 @@
+<mujoco model="so101_reach">
+  <include file="scene.xml"/>
+  <worldbody>
+    <body name="target" mocap="true" pos="0.2 0 0.15">
+      <geom type="sphere" size="0.012" rgba="1 0 0 0.8" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

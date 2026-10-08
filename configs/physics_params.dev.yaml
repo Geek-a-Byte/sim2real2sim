@@ -1,0 +1,59 @@
+# UNCALIBRATED DEFAULTS - DO NOT USE FOR FINAL SIM2REAL
+# Strict loader will require all values to be populated for calibrated runs.
+version: "0.1.0_dev"
+
+# Reference board: moopok Fast Sling Puck, size M (Amazon B086KWXPTY).
+# Provenance tags: [spec] = listing text, [image] = listing image (size S, assumed
+# same for M), [derived] = computed from tagged values, [TODO] = must be measured.
+board:
+  outer_length_m: 0.3658     # [spec] 14.4 in
+  outer_width_m: 0.2159      # [spec] 8.5 in
+  outer_height_m: 0.0249     # [spec] 0.98 in ("tabletop thickness 2.5 cm" = same value)
+  board_mass_kg: 0.360       # [spec] 360 g; not used by sim (board is fixed)
+  wall_thickness_m: 0.01524  # [image] 0.6 in frame width. TODO: measure on size M
+  length_m: 0.3353           # [derived] inner play length = 14.4 - 2*0.6 in
+  width_m: 0.1854            # [derived] inner play width = 8.5 - 2*0.6 in
+  divider_thickness_m: null  # TODO: measure center divider thickness
+  gate_width_m: 0.05         # TODO: measure. Placeholder; must be > puck diameter 0.0302
+  restitution: 0.85          # TODO: fit by sysid (wood wall). Uncalibrated placeholder
+  paddle_restitution: 0.50   # TODO: fit by sysid. Uncalibrated placeholder
+
+puck:
+  radius_m: 0.0151           # [image] 1.19 in diameter. TODO: confirm on size M
+  thickness_m: 0.0102        # [image] 0.4 in. TODO: confirm on size M
+  mass_kg: 0.0045            # TODO: weigh. Placeholder from volume 7.3e-6 m^3 x wood 500-750 kg/m^3 = 3.6-5.5 g
+  friction_kinetic: 0.20     # TODO: fit by sysid (wood on wood). Uncalibrated placeholder
+
+band:
+  # TODO: measure anchor positions. Placeholder: band spans the inner width,
+  # anchored at the side walls, at an unknown distance from the end wall.
+  anchor_left_xy_m: [-0.0927, 0.0]  # [derived] -width_m/2, relative to band line center
+  anchor_right_xy_m: [0.0927, 0.0]  # [derived] +width_m/2
+  band_offset_from_end_wall_m: null # TODO: measure
+  rest_length_m: 0.1854      # [derived] assumes band spans inner width. TODO: confirm
+  max_stretch_m: 0.12        # TODO: measure. Placeholder; must be < half length_m (0.168)
+  stiffness_k_n_m: 50.0
+  hysteresis_loss_factor: 0.15 # Energy lost on unload
+
+servo:
+  max_rate_rad_s: 5.23       # Approx 50 RPM
+  lag_time_constant_s: 0.05  # First-order lag
+  deadband_rad: 0.01
+  command_latency_s: 0.03
+
+camera:
+  fps: 60
+  latency_s: 0.05
+  noise_std_dev_m: 0.003
+  dropout_prob: 0.02
+
+opponent:
+  reload_time_mu_s: 2.0
+  reload_time_std_s: 0.5
+  aim_time_s: 0.5
+  tell_strength: 0.8 # Range [0.0, 1.0]
+  shot_speed_mu: 3.0
+
+scoring:
+  points_to_win: 5
+  max_episode_time_s: 60.0

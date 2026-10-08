@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.deepeval/
+.DS_Store
+.vscode/
+logs/
+tensorboard_logs/
+runs/
+*.onnx
+save_rate_curve.png

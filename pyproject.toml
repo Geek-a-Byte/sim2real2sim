@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slingpuck"
+version = "0.1.0"
+description = "Sim2real2sim RL pipeline for SO-101 Fast Sling Puck"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gymnasium>=0.29.1",
+    "pybullet>=3.2.5",
+    "torch>=2.0.0",
+    "stable-baselines3[extra]>=2.2.1", # [extra] includes tensorboard
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pandas>=2.0.0",
+    "pyyaml>=6.0",
+    "onnxruntime>=1.16.0",
+    "matplotlib>=3.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
