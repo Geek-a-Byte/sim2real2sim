@@ -1,0 +1,16 @@
+synthetic: true
+base_version: v0
+seed: 0
+truth:
+  band.stiffness_k_n_m: 230.0
+  band.stiffness_exponent: 1.2
+  band.natural_length_m: 0.152
+  band.hysteresis_loss_factor: 0.22
+  band.energy_transfer: 0.62
+  arm.deflection_compliance_m_per_n: 0.0014
+  puck.friction_kinetic: 0.24
+  board.restitution: 0.78
+  servo.command_latency_s: 0.042
+  servo.lag_tau_s: 0.065
+  servo.max_rate_deg_s: 250.0
+  servo.deadband_deg: 0.4

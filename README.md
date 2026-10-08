@@ -26,10 +26,12 @@ The project has three phases:
 7. [Physics and sensing models](#physics-and-sensing-models)
 8. [Phase 1: goalkeeper](#phase-1-goalkeeper)
 9. [MuJoCo simulation](#mujoco-simulation)
-10. [Tests](#tests)
-11. [Reproducibility](#reproducibility)
-12. [Known problems and open items](#known-problems-and-open-items)
-13. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
+10. [Phase 2: targeted shot](#phase-2-targeted-shot)
+11. [System identification (sim2real2sim)](#system-identification-sim2real2sim)
+12. [Tests](#tests)
+13. [Reproducibility](#reproducibility)
+14. [Known problems and open items](#known-problems-and-open-items)
+15. [Values to measure on the real hardware](#values-to-measure-on-the-real-hardware)
 
 ---
 
@@ -40,7 +42,7 @@ The project has three phases:
 | M1 | Physics, servo, camera, tracker, config versioning, unit tests | Done |
 | M2 | Phase 1 env, asymmetric PPO, save-rate eval, viewers | Done (3 seeds trained and evaluated). Waits for review |
 | — | MuJoCo backend for Phase 1 (board, puck, SO-101 arm), 3D viewer, sim-to-sim eval | Done |
-| M3 | Phase 2 env, band and deflection models, sysid with synthetic logs | Old code only. Not reviewed |
+| M3 | Phase 2 env, band and deflection models, sysid with synthetic logs, parity eval | Done (3 seeds trained and evaluated). Waits for review |
 | M4 | Opponent model, Phase 3 hierarchical env, rule-based baseline | Old code only. Has known bugs |
 | M5 | Selector training, ablations, ONNX export, latency benchmark | Old code only. Not reviewed |
 
@@ -59,7 +61,10 @@ Git history:
 | `74d72f9` | Top-down goalkeeper viewer |
 | `88ebf85` | Load trained runs with either import path; how to run |
 | `6f285e8` | MuJoCo backend, 3D viewer (work in progress) |
-| (latest) | MuJoCo contact calibration, tests, final 3-seed results |
+| `c2947e0` | MuJoCo contact calibration, tests, final M2 results |
+| `d354cd8` | M3: band, deflection, Phase 2 sling env |
+| `acb49f4` | M3: sysid fits |
+| (latest) | M3: run_sysid, hole-rate and parity eval, results |
 
 ---
 
@@ -70,7 +75,7 @@ Requirements: Python 3.10 or later. The project was tested with Python 3.14
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 83 tests, about 8 s
+pytest -q            # 114 tests, about 40 s (the sysid recovery tests are the slow ones)
 ```
 
 **Run all commands from the project root folder**, in the form
@@ -118,6 +123,16 @@ python -m src.slingpuck.eval.visualize_goalkeeper --policy center --speed 2.6 --
 mjpython -m src.slingpuck.eval.view_mujoco --run logs/goalkeeper/<run_dir>          # live 3D window
 python   -m src.slingpuck.eval.view_mujoco --policy center --save gk3d.gif           # GIF
 python   -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s*_* --backend mujoco
+
+# Phase 2: train the sling shot and evaluate the gate success rate
+python -m src.slingpuck.train.train_sling
+python -m src.slingpuck.eval.hole_rate --runs logs/sling/sling_v0_s*_*
+
+# Sysid: fit physics from logs, write a new params version, check sim vs real
+python -m src.slingpuck.sysid.synthetic --out data/real_logs/synthetic          # synthetic logs to try it
+python -m src.slingpuck.sysid.run_sysid --logs data/real_logs/synthetic --natural-length 0.152
+python -m src.slingpuck.eval.hole_rate --parity data/real_logs/synthetic/shots.csv \
+       --versions v0 v1 --cfg-dir data/real_logs/synthetic/fit
 ```
 
 ---
@@ -130,10 +145,13 @@ configs/
   servo.yaml               Servo model parameters
   env.yaml                 Sim timing, tracker tuning, goalkeeper task, opponent, scoring, randomization
   train_goalkeeper.yaml    PPO hyperparameters and seeds for Phase 1
+  train_sling.yaml         PPO hyperparameters and seeds for Phase 2
 assets/
   urdf/so101.urdf          SO-101 URDF (not used yet)
   mujoco/robotstudio_so101/  SO-101 MuJoCo model (RobotStudio MJCF, STS3215 actuators)
-data/real_logs/schema.md   CSV schema for real teleoperation logs (sysid input)
+data/real_logs/
+  schema.md                CSV schemas of the sysid logs and how to record them
+  synthetic_example/       Small synthetic logs (with truth.yaml) to try the pipeline
 src/slingpuck/
   config.py                Config loader, params versioning, placeholders, strict mode, randomization, run records
   kinematics.py            GoalkeeperGeometry: the one action -> pan -> joint mapping (sim and robot)
@@ -142,8 +160,8 @@ src/slingpuck/
     puck_dynamics.py       Fast2DPuckSim: friction, walls, divider + gate, puck-puck, kinematic paddle
     servo_model.py         Latency -> deadband -> first-order lag -> rate limit
     mujoco_goalkeeper.py   MuJoCo scene from config, arm pose (IK), contact calibration, MuJoCo backend
-    band_model.py          Old linear band model (M3 replaces it)
-    arm_deflection.py      Old compliance model (M3 replaces it)
+    band_model.py          Pre-stretched band: V geometry, nonlinear tension, closed hysteresis loop, release
+    arm_deflection.py      Actual pull = command - compliance x band force (bisection)
   sensing/
     camera_model.py        Frame rate, latency, Gaussian noise, dropouts; seeded
     kalman_tracker.py      Constant-velocity Kalman filter with latency compensation
@@ -151,22 +169,29 @@ src/slingpuck/
     goalkeeper_env.py      Phase 1 env (recovery task) with physics hooks
     mujoco_goalkeeper_env.py  Phase 1 env on MuJoCo physics (same spaces and task)
     wrappers.py            PrivilegedObsWrapper (Dict obs for the asymmetric critic)
-    sling_env.py           Old Phase 2 env (M3 replaces it)
+    sling_env.py           Phase 2 env (slide, pull, correct, release, flight)
     match_env.py           Old Phase 3 env (M4 replaces it; has known bugs)
   policies/
     asymmetric.py          AsymmetricActorCriticPolicy for SB3 PPO
-    scripted.py            CenterBlocker, HoldStart baselines
+    scripted.py            CenterBlocker, HoldStart baselines (Phase 1)
+    sling_scripted.py      SlideCenter, SlideCenterCorrect baselines (Phase 2)
   train/
-    common.py              Env factories, run directories, outcome logging callback
+    common.py              Env factories, run loader, shared PPO runner and CLI, outcome logging
     train_goalkeeper.py    Phase 1 PPO training
+    train_sling.py         Phase 2 PPO training
     train_selector.py      Old Phase 3 training (M5 replaces it)
   eval/
     save_rate_vs_speed.py  Phase 1 eval with CIs, CSV tables and a plot
+    hole_rate.py           Phase 2 eval: success vs shot count; sim-vs-real parity
     stats.py               Wilson and Student-t confidence intervals
     visualize_goalkeeper.py  Top-down slow-motion viewer (window or GIF)
     view_mujoco.py         3D MuJoCo viewer (mjpython window or GIF)
     vulnerability_window.py  Old Phase 3 baseline (M4 replaces it)
-  sysid/fit_physics.py     Old sysid (M3 replaces it)
+  sysid/
+    schema.py              Log schemas and loaders
+    synthetic.py           Synthetic logs from the sim with known true values
+    fit.py                 Band bench, servo step and shot fits
+    run_sysid.py           Runs the fits, writes physics_params_v<N+1>.yaml
   deploy/                  Old ONNX export, latency benchmark, LeRobot stub (M5)
 tests/                     pytest suite
 docs/figures/              Figures used in this README
@@ -244,7 +269,7 @@ cfg["meta"]                          # params_version, params_file, calibrated, 
 ### Placeholders and strict mode
 
 - Every value that is not measured has a `TODO` comment **and** is listed under
-  `placeholders:` in its file. There are 26 in `physics_params_v0.yaml` and 4 in
+  `placeholders:` in its file. There are 29 in `physics_params_v0.yaml` and 4 in
   `servo.yaml`.
 - `load_config(..., strict=True)` raises `ConfigError` while any placeholder or
   null value remains. Use strict mode for every result that you report against
@@ -630,6 +655,183 @@ live window runs until you close it.
 
 ---
 
+## Phase 2: targeted shot
+
+### The band, and why the arm must aim by placement
+
+Each player has a band stretched between two pegs at the side walls, parallel to
+the end wall (`physics/band_model.py`). The puck rests against the band; the arm
+hooks it, pulls it back, and releases it.
+
+- **Pre-tension:** the band is shorter than the peg span, so it is under tension
+  at rest. The pre-tension gives most of the launch energy. Without it, a 3 cm
+  pull would launch a 27 g puck at about 0.4 m/s, too slow to reach the gate.
+- **Tension law:** loading `T = k s (s / 1 cm)^(exponent - 1)`, with s the band
+  length minus the natural length. Unloading follows a lower curve that meets the
+  loading curve at both ends (**the hysteresis loop closes**) and loses exactly
+  `hysteresis_loss_factor` of the loading work. Tests check both.
+- **Release:** the puck starts at rest at the pulled point. The band force
+  `T (u_left + u_right)` and sliding friction push it until it crosses the band
+  line. `energy_transfer` is the fraction of that energy the puck keeps.
+- **Arm deflection** (`physics/arm_deflection.py`): actual pull = commanded pull
+  − compliance × band force, solved exactly by bisection. At a 3 cm command the
+  arm gives way about 4.5 mm.
+
+**Main finding:** the band launches the puck **almost straight forward** from
+where it is released. The pull is small compared with the band span (3 cm
+against 18.5 cm), so `u_left + u_right` points almost straight ahead for any pull
+angle: a 17° pull steers the puck by less than 1°. A sweep over pull angle and
+distance showed that a shot scores only when the puck leaves the band within
+±3 mm of the gate center, which needs the puck to start within about 15 mm of
+the center. So the plan's 2-D action (angle, distance) could not score from most
+start positions. **Decision (user):** add placement. The arm first slides the
+puck along the band, then pulls (real players also slide the puck).
+
+Off center, the asymmetric V pushes the puck slightly back toward the band
+center (a 30 mm offset curves to about 23 mm at the gate). Bank shots off the
+side walls are not possible, because the shots go straight.
+
+### Episode, observation, action, reward (`envs/sling_env.py`)
+
+| Step | Policy sees | Action (each in [−1, 1]) | What happens |
+|---|---|---|---|
+| 1. Aim | Tracked puck at rest (mean of 0.3 s of camera frames) | Slide x (±7.6 cm), pull angle (±35°), pull distance (0–3 cm) | Slide (±1 mm noise), pull (angle and pull noise), arm deflection |
+| 2. Correct | Tracked pulled puck, band depth (from the camera), the step-1 command | Lateral shift (±3 mm), angle (±3°), pull (±30%) | Re-pull with half the noise, release (±0.5° release scatter), 2D flight |
+
+- **Reward:** +1 if the puck crosses the gate into the opponent half, plus
+  `0.3 × exp(−(miss / 1 cm)²)`, where miss is |x| when the puck reaches the
+  divider (or a large value if it falls short).
+- **Still-puck measurement:** the frame mean, not the Kalman tracker. For a
+  still puck the constant-velocity filter gives about 2 mm error, larger than the
+  1 mm placement error that the correction must fix; with it, the correction made
+  the shots worse (77.5% vs 91.5%). The frame mean gives about 0.7 mm.
+- **Domain randomization:** band stiffness, natural length, hysteresis, energy
+  transfer, compliance, friction, restitution, gate width, camera values.
+- A pull too small to beat friction leaves the puck behind the band (a miss).
+- `correction_step: false` in `env.yaml` gives a one-step version.
+- Privileged critic inputs: true start, slide and pull positions, and the
+  randomized physics values.
+
+### Training and evaluation
+
+```bash
+python -m src.slingpuck.train.train_sling [--seeds 0 1 2] [--timesteps N]
+python -m src.slingpuck.eval.hole_rate --runs logs/sling/sling_v0_s*_* [--shots 1000]
+```
+
+`configs/train_sling.yaml`: asymmetric PPO, 8 envs, 400k steps, seeds 0, 1, 2
+(about 4 min per seed). The eval runs every policy on the same shots and writes
+`success_summary.csv`, per-shot `shots.csv`, `hole_rate.png` and `eval_meta.yaml`
+to `results/sling/<time>/`. CIs as in Phase 1.
+
+### Results (3 seeds, 1000 shots per policy and seed)
+
+![Phase 2 gate success](docs/figures/hole_rate.png)
+
+| Policy | Gate success, 95% CI |
+|---|---|
+| PPO (3 seeds) | 94.6% [93.0, 95.8] |
+| Scripted: slide + camera correction | 93.8% [92.1, 95.1] |
+| Scripted: slide to center, straight pull | 92.5% [90.7, 94.0] |
+
+All three are close, because the best shot is simple (slide to the center, pull
+straight back). The remaining misses come mostly from the release scatter
+(±0.5°, about 1 mm at the gate) and the placement noise, which are placeholders.
+PPO is slightly better than the scripted policies, but its CI overlaps with the
+correction baseline. The success rate is about the same for every start position,
+because the slide removes the start offset.
+
+---
+
+## System identification (sim2real2sim)
+
+```bash
+python -m src.slingpuck.sysid.run_sysid --logs data/real_logs/<session> --natural-length <m>
+```
+
+The logs and how to record them are in [`data/real_logs/schema.md`](data/real_logs/schema.md).
+
+| Log | Real test | Fits |
+|---|---|---|
+| `band_bench.csv` | Force gauge on the band center: load and unload, several cycles | Band stiffness, exponent, hysteresis |
+| `servo_step.csv` | Step commands to the pan joint with the paddle mounted | Command latency, lag, max rate, deadband |
+| `shots.csv` | Camera frames of shots: at rest, held after the pull, flight | Compliance, friction, wall restitution, energy transfer |
+
+How the fits work (`sysid/fit.py`):
+
+- **Band:** least squares on all load and unload points. The bench pulls change
+  the band length only a little, so stiffness, exponent and natural length trade
+  off (only the pre-tension and the slope are fixed by the data). **Measure the
+  natural length with a ruler**; it is held fixed.
+- **Servo:** latency by grid search (1 ms), deadband by grid search (0.02°, it has
+  no useful gradient), lag and max rate by least squares on all tests at once.
+- **Compliance:** measured pull depth vs the commanded pull through the band model.
+- **Friction:** one deceleration shared by every free sliding segment of every shot
+  (band line to divider, after the gate, back from a divider bounce).
+- **Wall restitution:** normal speed into and out of the divider face. Straight
+  shots never touch the side walls, so the shot log must include off-center
+  shots that bounce off the divider.
+- **Energy transfer:** exit speeds at the band line vs the band model. Shots alone
+  cannot separate it from hysteresis (both scale the launch speed); the bench
+  gives the hysteresis.
+
+`run_sysid` writes `physics_params_v<N+1>.yaml`: the parent with the fitted
+values, those values removed from `placeholders`, servo values in its `servo:`
+section, and a `sysid:` record (parent version, log checksums, git hash, every fit
+with its standard error, suggested ±2σ randomization ranges). Fits of synthetic
+logs are never written to `configs/`, so `load_config("latest")` cannot load a
+fit of fake data.
+
+### Test on synthetic logs
+
+`sysid/synthetic.py` makes logs from the simulator with known true values that
+differ from v0, with camera noise, dropouts, gauge noise and encoder
+quantization. The fit recovers them (seed 0 shown; the shot values were within
+about 1σ over 6 seeds):
+
+| Parameter | v0 | Truth | Fit |
+|---|---|---|---|
+| Band stiffness (N/m) | 200 | 230 | 236 ± 6 |
+| Band exponent | 1.0 | 1.2 | 1.18 ± 0.02 |
+| Hysteresis loss | 0.15 | 0.22 | 0.220 ± 0.002 |
+| Servo latency (s) | 0.030 | 0.042 | 0.042 |
+| Servo lag τ (s) | 0.050 | 0.065 | 0.065 |
+| Servo max rate (deg/s) | 300 | 250 | 255 (2% high: encoder quantization) |
+| Servo deadband (deg) | 0.5 | 0.4 | 0.40 |
+| Compliance (m/N) | 0.0010 | 0.0014 | 0.00142 ± 0.00003 |
+| Friction μ | 0.20 | 0.24 | 0.240 ± 0.005 |
+| Wall restitution | 0.85 | 0.78 | 0.80 ± 0.02 |
+| Energy transfer | 0.70 | 0.62 | 0.614 ± 0.009 |
+
+Four problems were found and fixed on the way: band parameters that trade off
+(natural length now measured), a deadband stuck at its start value (now a grid
+search), a frame selection by the noisy y that biased speeds low by 8% (now a
+second pass by the fitted y), and a bounce between two frames that put
+post-bounce frames into the first segment.
+
+### Sim-vs-real parity
+
+```bash
+python -m src.slingpuck.eval.hole_rate --parity <shots.csv> --versions v0 v1 [--cfg-dir <dir>]
+```
+
+Every logged shot is replayed 40–100 times in the sim with the same rest position
+and commands. Two measures:
+
+- **Success:** Brier score and a reliability diagram. The outcome depends mostly
+  on the lateral aim, so it barely changes with friction or launch energy.
+- **Transit time** from 2 cm past the band line to y = −4 cm, from the camera
+  frames. It depends directly on the launch speed and friction.
+
+![Parity on synthetic logs](docs/figures/parity_synthetic.png)
+
+On the synthetic logs, the uncalibrated v0 sim is clearly too fast (transit
+−9.5 ms [−12.0, −7.0]); the fitted v1 agrees (+0.7 ms [−1.7, +3.2]). The success
+Brier scores (0.136 vs 0.140) cannot separate the two with 65 shots. This is the
+sim2real2sim loop: log real shots, fit, write a new version, check parity, retrain.
+
+---
+
 ## Tests
 
 ```bash
@@ -648,7 +850,9 @@ pytest -q
 | `test_asymmetric_policy.py` | Actor ignores privileged input, critic uses it, save and load |
 | `test_stats.py` | Wilson and t intervals against known values |
 | `test_mujoco_goalkeeper.py` | Paddle on the 2D arc, pan sign, Coulomb friction, calibrated wall and paddle restitution, gate crossing and divider, `check_env` and identical spaces, center saves a slow shot, randomization updates the model |
-| `test_band.py` | Old band hysteresis (M3 replaces it with a closed-loop test) |
+| `test_band.py` | **Hysteresis loop closes** and loses the set fraction (3 exponents × 3 losses), monotonic tension, pre-tension, force direction, release energy balance, energy transfer, almost-straight launch, deflection, tiny pull does not launch |
+| `test_sling_env.py` | `check_env` (Box and Dict), 2 steps with correction and 1 without, seeded repeat, noiseless center hit and off-center miss, reward, band depth seen after the pull, scripted baselines |
+| `test_sysid.py` | Schema checks, synthetic recovery of band, servo and shot parameters, closed loop in the bench log, versioned params file, synthetic fits never go to `configs/`, transit-time interpolation |
 
 ---
 
@@ -693,11 +897,22 @@ pytest -q
 - The arm pose and paddle mount are designed in sim; the real end effector and
   its mounting are not known yet (`robot.*` placeholders).
 
+### Phase 2 and sysid (M3)
+
+- The band vertex is taken at the puck center (the puck radius is ignored in the
+  band geometry), and only deflection along the pull direction is modeled.
+- The noise values (placement, angle, pull, release scatter) are placeholders;
+  they set the miss rate, so measure them (repeat the same shot ~30 times).
+- The camera latency cannot be fitted from these logs (it needs a sync event,
+  for example an LED in view); it is still a placeholder.
+- Paddle restitution is not fitted yet (needs goalkeeper hit logs).
+- The pull-back assumes the arm can reach the band region; with the placeholder
+  base position the band is only ~10 cm from the pan axis. Check the reach on the
+  real setup.
+- `match_env.py` (old, M4) still calls the old `SlingEnv` API.
+
 ### Later milestones (old code, not yet rebuilt)
 
-- **M3:** `band_model.py` is linear, and its hysteresis is not a closed loop.
-  `sling_env.py` is a one-step bandit with a straight-line gate check. The
-  sysid fits only 3 parameters and has no synthetic-log generator or example CSV.
 - **M4:** `opponent/scripted_opponent.py` fires shots **away** from the gate (sign
   error), and it uses the global NumPy random state. `match_env.py` does not
   count goals during sling recovery, and a sling resolves in one step. The opponent
@@ -722,8 +937,10 @@ its config file. Strict mode does not run until you replace them.
 | Divider thickness | `board.divider_thickness_m` | Paddle position and gate geometry |
 | Puck mass (one puck alone) | `puck.mass_kg` | Phase 2 launch speed |
 | Puck diameter and thickness on size M | `puck.radius_m`, `puck.thickness_m` | All contacts |
-| Band position and maximum stretch | `band.band_offset_from_end_wall_m`, `band.max_stretch_m` | Shot start point, Phase 2 range |
-| Band force vs stretch (loading and unloading) | `band.*` | Phase 2 band model (M3) |
+| Band peg spacing, band distance from the end wall, maximum pull | `band.anchor_span_m`, `band.band_offset_from_end_wall_m`, `band.max_pull_m` | Band geometry, shot range |
+| **Natural (unstretched) band length** (ruler) | `band.natural_length_m` (`--natural-length`) | Pre-tension; needed by the band bench fit |
+| Band bench test, servo step test, shot log | see `data/real_logs/schema.md` | Fit the band, servo, compliance, friction, restitution, energy transfer |
+| Shot repeatability (same command ~30 times) | `sling.*_noise_*` | Sets the Phase 2 miss rate |
 | Arm base position | `robot.base_xy_m` | Paddle arc |
 | Pan joint zero offset | `robot.pan_zero_offset_rad` | Sim-to-robot angle mapping |
 | Paddle (end effector) width and thickness | `robot.paddle_width_m`, `robot.paddle_thickness_m` | Blocking geometry |
