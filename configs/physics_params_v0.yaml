@@ -33,15 +33,22 @@ puck:
   restitution: 0.90          # TODO: fit by sysid (puck on puck)
 
 band:
-  # Band spans the inner width, anchored at the side walls, at an unknown
-  # distance from the end wall.
-  anchor_left_xy_m: [-0.0927, 0.0]  # [derived] -width_m/2, relative to band line center
-  anchor_right_xy_m: [0.0927, 0.0]  # [derived] +width_m/2
-  band_offset_from_end_wall_m: 0.05 # TODO: measure
-  rest_length_m: 0.1854      # [derived] assumes band spans inner width. TODO: confirm
-  max_stretch_m: 0.12        # TODO: measure. Must be < length_m/2 (0.168)
-  stiffness_k_n_m: 50.0      # TODO: measure force-vs-stretch (M3 replaces with nonlinear curve)
-  hysteresis_loss_factor: 0.15 # TODO: fit by sysid
+  # One band per side, stretched between pegs at the side walls, parallel to the
+  # end wall. Pulling the puck back makes a V; the band tension pushes the puck
+  # forward on release. The band is pre-stretched (natural length < anchor span);
+  # the pre-tension gives most of the launch energy.
+  # Tension law (loading): T(s) = k * s * (s / 0.01 m)^(exponent - 1), s = band
+  # length - natural length. Unloading follows a lower curve that meets the
+  # loading curve at both ends (closed hysteresis loop), and loses
+  # hysteresis_loss_factor of the loading work.
+  anchor_span_m: 0.1854      # [derived] = inner width; assumes pegs at the side walls. TODO: measure peg spacing
+  band_offset_from_end_wall_m: 0.05 # TODO: measure (band line to agent end wall)
+  natural_length_m: 0.150    # TODO: fit from the band bench test (sets the pre-tension, ~7 N here)
+  stiffness_k_n_m: 200.0     # TODO: fit from the band bench test
+  stiffness_exponent: 1.0    # TODO: fit (1 = linear; > 1 stiffens with stretch)
+  hysteresis_loss_factor: 0.15 # TODO: fit from the band bench test (load/unload cycle)
+  energy_transfer: 0.70      # TODO: fit by sysid from launch speeds (band mass, slip-release losses)
+  max_pull_m: 0.030          # TODO: measure. Must be < band_offset - puck radius (0.035)
 
 arm:
   deflection_compliance_m_per_n: 0.001  # TODO: fit by sysid
@@ -76,11 +83,14 @@ placeholders:
   - puck.thickness_m
   - puck.friction_kinetic
   - puck.restitution
+  - band.anchor_span_m
   - band.band_offset_from_end_wall_m
-  - band.rest_length_m
-  - band.max_stretch_m
+  - band.natural_length_m
   - band.stiffness_k_n_m
+  - band.stiffness_exponent
   - band.hysteresis_loss_factor
+  - band.energy_transfer
+  - band.max_pull_m
   - arm.deflection_compliance_m_per_n
   - robot.base_xy_m
   - robot.pan_zero_offset_rad

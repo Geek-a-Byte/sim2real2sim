@@ -1,40 +1,53 @@
+"""Arm deflection under band load (Phase 2).
+
+The arm holds the puck against the band. The 3D-printed links and the servos
+give way a little, so the actual pull-back is shorter than the command:
+
+    d_act = d_cmd - compliance * F_par(d_act)
+
+F_par is the band force component that resists the pull (along -pull direction).
+d + compliance * F_par(d) increases with d, so bisection always finds d_act.
+Only deflection along the pull direction is modeled.
+"""
+from dataclasses import dataclass
+
 import numpy as np
 
-class DeflectionModel:
-    """
-    Models the physical deflection of the SO-101 arm under band tension.
-    Can operate in a fast analytical mode or query a PyBullet URDF stub.
-    """
-    def __init__(self, config, use_pybullet=False):
-        self.use_pybullet = use_pybullet
-        self.compliance = config['arm']['deflection_compliance_m_per_n']
+from src.slingpuck.physics.band_model import BandModel
 
-        if self.use_pybullet:
-            import pybullet as p
-            import pybullet_data
-            self.physics_client = p.connect(p.DIRECT)
-            p.setAdditionalSearchPath(pybullet_data.getDataPath())
-            # TODO: Replace plane.urdf with actual SO-101 LeRobot URDF path
-            # self.robot_id = p.loadURDF("assets/urdf/so101.urdf", [0,0,0], useFixedBase=True)
-            self.robot_id = p.loadURDF("plane.urdf") 
-            
-    def get_actual_pullback(self, commanded_pullback, band_force):
-        """
-        Calculates the true pullback distance factoring in the 3D-printed link deflection.
-        """
-        if self.use_pybullet:
-            # TODO: Apply wrench to the end-effector link in PyBullet and read joint states
-            # p.applyExternalForce(self.robot_id, end_effector_index, forceObj=[0, -band_force, 0], ...)
-            # p.stepSimulation()
-            # return measured_fk_position
-            pass
-            
-        # Analytical fallback: Delta x = Force * compliance
-        deflection_loss = band_force * self.compliance
-        actual_pullback = max(0.0, commanded_pullback - deflection_loss)
-        return actual_pullback
-        
-    def __del__(self):
-        if getattr(self, 'use_pybullet', False):
-            import pybullet as p
-            p.disconnect(self.physics_client)
+
+@dataclass(frozen=True)
+class PullResult:
+    pos: np.ndarray         # Actual puck position while held
+    pull_m: float           # Actual pull-back distance
+    force: np.ndarray       # Band force on the puck at that position (loading curve)
+
+
+def pull_direction(angle_rad: float) -> np.ndarray:
+    """Unit pull direction. angle 0 pulls straight back (-y), away from the gate."""
+    return -np.array([np.sin(angle_rad), np.cos(angle_rad)])
+
+
+def solve_pull(band: BandModel, start, angle_rad: float, pull_cmd_m: float, compliance_m_per_n: float,
+               tol: float = 1e-9) -> PullResult:
+    start = np.asarray(start, dtype=float)
+    u = pull_direction(angle_rad)
+
+    def resisting(d):
+        return float(-band.force_load(start + d * u) @ u)
+
+    if pull_cmd_m <= 0.0:
+        return PullResult(start.copy(), 0.0, band.force_load(start))
+    if compliance_m_per_n <= 0.0:
+        d = pull_cmd_m  # Rigid arm
+    else:
+        lo, hi = 0.0, pull_cmd_m
+        while hi - lo > tol:
+            mid = 0.5 * (lo + hi)
+            if mid + compliance_m_per_n * resisting(mid) > pull_cmd_m:
+                hi = mid
+            else:
+                lo = mid
+        d = 0.5 * (lo + hi)
+    pos = start + d * u
+    return PullResult(pos, d, band.force_load(pos))
