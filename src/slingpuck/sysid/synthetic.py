@@ -107,7 +107,7 @@ def shots_log(cfg, rng, n_gate=40, n_divider=25) -> pd.DataFrame:
         rest = np.array([x0, band.band_y])
         slide_act = slide + rng.normal(0, cfg["sling"]["place_noise_m"])
         pull = realize_pull(cfg, band, slide_act, angle, pull_cmd, rng)
-        flight = launch_and_fly(cfg, band, pull.pos, rng, record=True)
+        flight = launch_and_fly(cfg, band, pull.pos, rng, record=True, full=True)
         traj = flight.trajectory
         meta = (slide, angle, pull_cmd, int(flight.success))
         for t, x, y in _frames(cfg, rng, lambda t: rest, 0.0, 0.3):

@@ -66,7 +66,8 @@ def realize_pull(cfg, band: BandModel, x_start: float, angle: float, pull: float
 
 
 def launch_and_fly(cfg, band: BandModel, pull_pos, rng: np.random.Generator | None, record: bool = False,
-                   physics_dt: float = 0.001) -> FlightResult:
+                   physics_dt: float = 0.001, full: bool = False) -> FlightResult:
+    """Release and fly. full=True keeps simulating after the outcome (until the puck stops), for logs."""
     puck = cfg["puck"]
     if pull_pos[1] >= band.band_y - 1e-6:  # No pull: nothing launches
         return FlightResult(False, SHORT_MISS_M + abs(band.band_y), np.asarray(pull_pos), np.zeros(2),
@@ -94,8 +95,9 @@ def launch_and_fly(cfg, band: BandModel, pull_pos, rng: np.random.Generator | No
             miss = abs(x)
         if any(c.direction == 1 for c in ev.crossings):
             success = True
-            break
-        if not np.any(sim.vel) or (sim.vel[0, 1] < 0.0 and miss is not None):
+            if not full:
+                break
+        if not np.any(sim.vel) or (not full and sim.vel[0, 1] < 0.0 and miss is not None):
             break
     if miss is None:
         miss = SHORT_MISS_M + (face_y - sim.pos[0, 1])
