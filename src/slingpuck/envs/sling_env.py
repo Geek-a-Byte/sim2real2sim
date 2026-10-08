@@ -72,6 +72,10 @@ def launch_and_fly(cfg, band: BandModel, pull_pos, rng: np.random.Generator | No
         return FlightResult(False, SHORT_MISS_M + abs(band.band_y), np.asarray(pull_pos), np.zeros(2),
                             np.zeros((0, 3)) if record else None)
     rel = band.release(pull_pos, puck["mass_kg"], puck["friction_kinetic"])
+    face_y = -(0.5 * cfg["board"]["divider_thickness_m"] + puck["radius_m"])
+    if not rel.launched:  # Too small a pull: the puck stays behind the band
+        return FlightResult(False, SHORT_MISS_M + (face_y - rel.exit_pos[1]), rel.exit_pos, np.zeros(2),
+                            np.zeros((0, 3)) if record else None)
     vel = rel.exit_vel
     if rng is not None:
         a = rng.normal(0.0, np.deg2rad(cfg["sling"]["release_angle_noise_deg"]))
@@ -80,7 +84,6 @@ def launch_and_fly(cfg, band: BandModel, pull_pos, rng: np.random.Generator | No
     sim = Fast2DPuckSim.from_config(cfg)
     lim = 0.5 * cfg["board"]["width_m"] - puck["radius_m"]
     sim.reset([[float(np.clip(rel.exit_pos[0], -lim, lim)), rel.exit_pos[1]]], vel[None])
-    face_y = -(0.5 * cfg["board"]["divider_thickness_m"] + puck["radius_m"])
     miss, success, traj = None, False, []
     for k in range(int(cfg["sling"]["max_flight_s"] / physics_dt)):
         ev = sim.step(physics_dt)

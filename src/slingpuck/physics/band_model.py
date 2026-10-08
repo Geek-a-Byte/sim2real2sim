@@ -17,7 +17,9 @@ pre-stretched: at rest s0 = anchor_span - natural_length > 0.
   W_l = integral of T_l from s0 to s_max.
 
 Release: the puck starts at rest at P and is pushed by the unloading band (with
-sliding friction) until it crosses the band line. energy_transfer is the
+sliding friction) until it crosses the band line. If the band force cannot beat
+friction (a very small pull), or friction stops the puck before the band line,
+the puck stays behind the band (launched = False). energy_transfer is the
 fraction of that kinetic energy the puck keeps (band mass, slip-release losses),
 so the exit speed is scaled by sqrt(energy_transfer).
 """
@@ -52,6 +54,7 @@ class ReleaseResult:
     exit_vel: np.ndarray    # After energy_transfer
     release_time_s: float
     band_work_j: float      # Work the band did on the puck (before energy_transfer)
+    launched: bool = True   # False if the puck stopped behind the band line
 
 
 class BandModel:
@@ -127,7 +130,11 @@ class BandModel:
             speed = math.hypot(vel[0], vel[1])
             if speed > 0.0:
                 acc = acc - decel * vel / speed
+            elif np.linalg.norm(acc) <= decel:
+                return ReleaseResult(pos, np.zeros(2), t, work, launched=False)  # Static friction holds it
             new_vel = vel + acc * dt
+            if speed > 0.0 and float(new_vel @ vel) <= 0.0:
+                return ReleaseResult(pos, np.zeros(2), t, work, launched=False)  # Friction stopped it
             step = new_vel * dt
             work += float(force @ step)
             prev = pos.copy()

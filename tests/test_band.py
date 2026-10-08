@@ -89,3 +89,11 @@ def test_config_band(cfg):
     bad["band"]["energy_transfer"] = 0.0
     with pytest.raises(ValueError):
         BandModel.from_config(bad)
+
+
+def test_tiny_pull_does_not_launch():
+    b = band()
+    # Band force at 0.2 mm depth is below sliding friction (mu * m * g ~ 0.05 N).
+    r = b.release((0.0, b.band_y - 0.0002), mass=0.027, mu=0.2)
+    assert not r.launched and np.all(r.exit_vel == 0)
+    assert b.release((0.0, b.band_y - 0.02), mass=0.027, mu=0.2).launched
