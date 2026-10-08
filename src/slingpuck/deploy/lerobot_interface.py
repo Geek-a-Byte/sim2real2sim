@@ -1,6 +1,8 @@
 import time
 import numpy as np
 import onnxruntime as ort
+
+from slingpuck.kinematics import GoalkeeperGeometry
 # from lerobot.hardware.motor import STS3215Bus # Conceptual LeRobot hardware interface
 
 class SO101Controller:
@@ -13,6 +15,9 @@ class SO101Controller:
         self.session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
         self.input_name = self.session.get_inputs()[0].name
         
+        # Same action -> pan mapping as the sim (GoalkeeperEnv)
+        self.geom = GoalkeeperGeometry.from_config(config)
+
         # Hardware limits
         self.max_rate_rad_s = np.deg2rad(config['servo']['max_rate_deg_s'])
         self.max_torque = 1.5 # N.m (Feetech STS3215 spec)
@@ -28,6 +33,9 @@ class SO101Controller:
         """
         Polls camera tracker and hardware encoders.
         Returns: [puck_x, puck_y, puck_vx, puck_vy, pan_angle, pan_vel]
+
+        FIXME(M5): must build the same 8-value normalized vector as GoalkeeperEnv._obs
+        (GoalkeeperEnv.POLICY_OBS_NAMES). This stub still returns the old 6-value layout.
         """
         # TODO: Replace with live Kalman tracker output
         simulated_tracker = [0.0, 0.2, 0.0, -1.0] 
@@ -41,10 +49,8 @@ class SO101Controller:
         """
         Maps raw policy action to rate-limited hardware commands.
         """
-        target_norm = np.clip(action_vector[0], -1.0, 1.0)
-        # FIXME(M2): sim maps 1.0 to GoalkeeperEnv.max_pan_angle (~0.19 rad), not 0.5 rad.
-        # M2 moves this mapping into one shared function used by sim and robot.
-        target_angle = target_norm * 0.5 
+        # Policy action -> board-frame pan -> shoulder_pan joint command (shared with the sim)
+        target_angle = self.geom.pan_to_joint(self.geom.action_to_pan(action_vector))
         
         # Apply safety rate limits in software before dispatch
         angle_diff = target_angle - self.current_pan_angle

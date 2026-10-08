@@ -86,7 +86,7 @@ def test_divider_blocks_outside_gate(cfg):
     sim.reset([[x, -0.08]], [[0.0, 1.0]])
     crossings = []
     for _ in range(120):  # Hits the divider at ~60 ms, before the end wall at ~220 ms
-        crossings += sim.step(DT)
+        crossings += sim.step(DT).crossings
     assert crossings == []
     assert sim.pos[0, 1] < 0.0
     assert sim.vel[0, 1] < 0.0
@@ -97,7 +97,7 @@ def test_puck_passes_through_gate(cfg):
     sim.reset([[0.0, -0.08]], [[0.0, 1.0]])
     crossings = []
     for _ in range(150):
-        crossings += sim.step(DT)
+        crossings += sim.step(DT).crossings
     assert len(crossings) == 1
     assert crossings[0].direction == +1 and crossings[0].puck == 0
     assert abs(crossings[0].x) < 0.5 * sim.board.gate_width_m
@@ -117,3 +117,52 @@ def test_rejects_invalid_setup(cfg):
     sim = make_sim(cfg)
     with pytest.raises(ValueError):
         sim.reset([[0.0, 1.0]], [[0.0, 0.0]])
+
+
+def paddle(center, vel=(0.0, 0.0), omega=0.0, angle=0.0, e=0.5):
+    from slingpuck.physics.backend import PaddleState
+    return PaddleState(np.array(center, float), angle, np.array(vel, float), omega, 0.015, 0.003, e)
+
+
+def test_stationary_paddle_reflects_with_restitution(cfg):
+    sim = make_sim(cfg, mu=0.0)
+    sim.set_paddle(paddle([0.0, -0.10], e=0.5))
+    sim.reset([[0.0, -0.05]], [[0.0, -1.0]])
+    contacts = []
+    for _ in range(60):
+        contacts += sim.step(DT).paddle_contacts
+    assert contacts and set(contacts) == {0}
+    np.testing.assert_allclose(sim.vel[0], [0.0, 0.5], atol=1e-12)
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_energy_never_increases_with_stationary_paddle(cfg, seed):
+    rng = np.random.default_rng(seed)
+    sim = make_sim(cfg, n=2)
+    sim.set_paddle(paddle([0.01, -0.05], angle=0.3))
+    sim.reset([[-0.05, -0.12], [0.05, 0.1]], rng.uniform(-3, 3, (2, 2)))
+    energy = sim.kinetic_energy()
+    for _ in range(2000):
+        sim.step(DT)
+        assert sim.kinetic_energy() <= energy + 1e-12
+        energy = sim.kinetic_energy()
+
+
+def test_moving_paddle_pushes_puck(cfg):
+    sim = make_sim(cfg, mu=0.0)
+    sim.set_paddle(paddle([0.0, -0.10], vel=(0.0, 1.0), e=0.0))
+    sim.reset([[0.0, -0.10 + 0.003 + sim.puck.radius_m - 0.0005]], [[0.0, 0.0]])  # Small overlap
+    for _ in range(5):
+        sim.step(DT)
+    # A perfectly inelastic contact leaves the puck with the paddle's normal velocity.
+    assert sim.vel[0, 1] == pytest.approx(1.0)
+
+
+def test_rotating_paddle_surface_velocity(cfg):
+    sim = make_sim(cfg, mu=0.0)
+    # Paddle rotates counter-clockwise about its center; its +x tip moves toward +y.
+    sim.set_paddle(paddle([0.0, -0.10], omega=20.0, e=0.0))
+    tip = 0.012
+    sim.reset([[tip, -0.10 + 0.003 + sim.puck.radius_m - 0.0005]], [[0.0, 0.0]])  # Small overlap
+    sim.step(DT)
+    assert sim.vel[0, 1] == pytest.approx(20.0 * tip, rel=1e-6)

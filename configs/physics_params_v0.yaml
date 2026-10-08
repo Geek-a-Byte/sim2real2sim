@@ -45,6 +45,13 @@ band:
 arm:
   deflection_compliance_m_per_n: 0.001  # TODO: fit by sysid
 
+robot:
+  # SO-101 mounting and end effector, in the board frame.
+  base_xy_m: [0.0, -0.2177]  # TODO: measure pan-axis position. Placeholder: 5 cm behind the agent end wall
+  pan_zero_offset_rad: 0.0   # TODO: calibrate shoulder_pan joint reading when the paddle is centered on the gate
+  paddle_width_m: 0.030      # TODO: measure end-effector blocking face width
+  paddle_thickness_m: 0.006  # TODO: measure end-effector thickness
+
 camera:
   fps: 60                    # Plan default
   latency_s: 0.05            # TODO: measure (glass-to-tracker latency)
@@ -70,6 +77,10 @@ placeholders:
   - band.stiffness_k_n_m
   - band.hysteresis_loss_factor
   - arm.deflection_compliance_m_per_n
+  - robot.base_xy_m
+  - robot.pan_zero_offset_rad
+  - robot.paddle_width_m
+  - robot.paddle_thickness_m
   - camera.latency_s
   - camera.noise_std_m
   - camera.dropout_prob

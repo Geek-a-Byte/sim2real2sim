@@ -37,7 +37,7 @@ with the gate is at y = 0.
 | Milestone | Status |
 |---|---|
 | M1: physics, servo, camera, tracker, unit tests | Done, waiting for review |
-| M2: Phase 1 env, PPO baseline, save rate vs speed | Old version present; must be rebuilt on `Fast2DPuckSim` |
+| M2: Phase 1 env, PPO baseline, save rate vs speed | Code done; full training waits for a task-design decision |
 | M3: Phase 2 env, band and deflection models, sysid | Old version present; not reviewed |
 | M4: opponent, Phase 3 env, rule-based baseline | Old version present; known bugs (see below) |
 | M5: selector training, ablations, ONNX, latency | Old version present; not reviewed |
@@ -45,4 +45,18 @@ with the gate is at y = 0.
 Known bugs that later milestones must fix:
 - Opponent shots move away from the gate (`opponent/scripted_opponent.py`).
 - `MatchEnv` does not count goals during sling recovery.
-- The robot stub maps action 1.0 to 0.5 rad; the sim maps it to ~0.19 rad.
+- The robot stub observation still uses the old 6-value layout (M5).
+
+## Phase 1 (goalkeeper)
+
+```bash
+python -m slingpuck.train.train_goalkeeper            # seeds from configs/train_goalkeeper.yaml
+python -m slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/<run_dirs>
+```
+
+- `policy: asymmetric` trains an asymmetric actor-critic: the actor sees only the
+  tracked puck, pan encoder and previous action; the critic also sees the true
+  state and the randomized physics (`envs/wrappers.PrivilegedObsWrapper`).
+- The eval writes CSV tables, `save_rate.png` and `eval_meta.yaml` to `results/goalkeeper/`.
+- `slingpuck.kinematics.GoalkeeperGeometry` is the one action -> pan -> joint mapping,
+  used by both the env and `deploy/lerobot_interface.py`.
