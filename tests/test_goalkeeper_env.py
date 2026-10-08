@@ -70,7 +70,9 @@ def test_smoothness_penalty(cfg):
 
 
 def test_policy_obs_is_tracked_not_ground_truth(cfg):
-    env = GoalkeeperEnv(cfg)
+    c = copy.deepcopy(cfg)
+    c["goalkeeper"]["paddle_locked_until_launch"] = False  # Start before any camera frame
+    env = GoalkeeperEnv(c)
     obs, info = env.reset(seed=3)
     names = GoalkeeperEnv.POLICY_OBS_NAMES
     # Before the first camera frame the tracker has no estimate: zeros and valid = 0.
@@ -97,3 +99,29 @@ def test_domain_randomization_changes_physics_per_episode(cfg):
     assert len(frictions) == 5
     env.reset(seed=0, options={"randomize": False})
     assert env.cfg["puck"]["friction_kinetic"] == cfg["puck"]["friction_kinetic"]
+
+
+def test_locked_paddle_holds_until_launch(cfg):
+    env = GoalkeeperEnv(cfg)
+    pan0 = 0.7 * env.geom.pan_max
+    obs, info = env.reset(seed=4, options={"start_pan": pan0, "release_delay": 0.0})
+    names = GoalkeeperEnv.POLICY_OBS_NAMES
+    assert env.launched
+    assert env.t == pytest.approx(env.shot.prelaunch_s, abs=env.physics_dt)
+    assert float(env.servo.pos) == pytest.approx(pan0)  # Did not move while locked
+    assert obs[names.index("trk_valid")] == 1.0          # Tracker is warm at release
+    assert obs[names.index("prev_action")] == pytest.approx(0.7)
+
+
+def test_release_delay(cfg):
+    env = GoalkeeperEnv(cfg)
+    env.reset(seed=4, options={"release_delay": 0.05})
+    assert env.t == pytest.approx(env.shot.prelaunch_s + 0.05, abs=env.physics_dt)
+    assert env.release_delay == 0.05
+
+
+def test_long_release_delay_ends_at_first_step(cfg):
+    env = GoalkeeperEnv(cfg)
+    env.reset(seed=4, options={"release_delay": 1.0, "start_pan": env.geom.pan_max, "speed": 3.0})
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert terminated and info["outcome"] == "goal"

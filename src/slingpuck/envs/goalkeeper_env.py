@@ -6,6 +6,11 @@ arc in front of the gate. The policy sees only the Kalman-tracked puck (camera
 latency, noise, dropouts), the pan encoder, and its previous action. The true
 state is in info["privileged"] for an asymmetric critic (see envs/wrappers.py).
 
+Recovery task (paddle_locked_until_launch: true): the paddle is held at its
+start offset, as if the arm is busy with a sling, until the puck launches plus
+release_delay_s. reset() runs this locked period internally, so the first agent
+step is at the release time. The camera and tracker run during the lock.
+
 Outcomes (reward):
   save (+1): the puck touched the paddle and then moved back toward the opponent.
   goal (-1): the puck got past the paddle line, or stopped in the agent half.
@@ -103,6 +108,15 @@ class GoalkeeperEnv(gym.Env):
         self.touched = False
         self.entered = False
         self.prev_action = self.geom.pan_to_action(pan0)
+        self._pending_outcome = None
+
+        self.release_delay = 0.0
+        if self.task["paddle_locked_until_launch"]:
+            self.release_delay = float(options.get("release_delay",
+                                                   self.np_random.uniform(*self.task["release_delay_s"])))
+            t_release = self.shot.prelaunch_s + self.release_delay
+            while self.t < t_release - 1e-12 and self._pending_outcome is None:
+                self._pending_outcome = self._substep(pan0)
         return self._obs(), self._info(None)
 
     def _sample_shot(self, options) -> Shot:
@@ -143,21 +157,11 @@ class GoalkeeperEnv(gym.Env):
         reward = -self.task["smoothness_weight"] * abs(a - self.prev_action)
         self.prev_action = a
 
-        outcome = None
-        for _ in range(self.n_substeps):
-            self.t += self.physics_dt
-            if not self.launched and self.t >= self.shot.prelaunch_s - 1e-12:
-                self.sim.reset(self.sim.pos, self.shot.vel[None])
-                self.launched = True
-            pan = float(self.servo.step(target))
-            self.sim.set_paddle(self.geom.paddle_state(pan, float(self.servo.vel), self.paddle_e))
-            events = self.sim.step(self.physics_dt)
-            self.touched |= bool(events.paddle_contacts)
-            self.entered |= any(c.direction == -1 for c in events.crossings)
-            for frame in self.camera.observe(self.t, self.sim.pos[0]):
-                self.tracker.update(frame)
-            if self.launched:
-                outcome = self._check_outcome(events)
+        # An outcome reached during the locked period ends the episode at the first step.
+        outcome, self._pending_outcome = self._pending_outcome, None
+        if outcome is None:
+            for _ in range(self.n_substeps):
+                outcome = self._substep(target)
                 if outcome is not None:
                     break
 
@@ -169,6 +173,21 @@ class GoalkeeperEnv(gym.Env):
         if outcome is not None:
             reward += REWARD[outcome]
         return self._obs(), reward, terminated, truncated, self._info(outcome)
+
+    def _substep(self, target_pan: float):
+        """Advance one physics step. Returns the outcome if the episode ended, else None."""
+        self.t += self.physics_dt
+        if not self.launched and self.t >= self.shot.prelaunch_s - 1e-12:
+            self.sim.reset(self.sim.pos, self.shot.vel[None])
+            self.launched = True
+        pan = float(self.servo.step(target_pan))
+        self.sim.set_paddle(self.geom.paddle_state(pan, float(self.servo.vel), self.paddle_e))
+        events = self.sim.step(self.physics_dt)
+        self.touched |= bool(events.paddle_contacts)
+        self.entered |= any(c.direction == -1 for c in events.crossings)
+        for frame in self.camera.observe(self.t, self.sim.pos[0]):
+            self.tracker.update(frame)
+        return self._check_outcome(events) if self.launched else None
 
     def _check_outcome(self, events):
         y, vy = self.sim.pos[0, 1], self.sim.vel[0, 1]
@@ -228,5 +247,6 @@ class GoalkeeperEnv(gym.Env):
             "shot_speed": self.shot.speed,
             "threat": self.shot.threat,
             "start_pan": self.start_pan,
+            "release_delay": self.release_delay,
             "privileged": self.privileged_obs(),
         }

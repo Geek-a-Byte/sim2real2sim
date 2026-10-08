@@ -12,6 +12,9 @@ Example:
     python -m slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkeeper_v0_s0_* \
         --episodes-per-bin 300
 Outputs CSV tables, a PNG figure and eval_meta.yaml in results/goalkeeper/<timestamp>/.
+save_rate_grid.csv (speed x start offset) is the time-to-cover result that Phase 3
+uses for the vulnerability window. --release-delay sets how long after the launch
+the paddle becomes free.
 """
 import argparse
 import csv
@@ -35,7 +38,7 @@ from slingpuck.train.common import make_goalkeeper_env  # noqa: E402
 N_START_BINS = 4
 
 
-def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_seed, randomize):
+def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_seed, randomize, release_delay):
     """Return list of dicts: speed, start_offset (fraction of pan range), saved."""
     env = make_goalkeeper_env(config, asymmetric)
     gk = env.unwrapped
@@ -44,7 +47,8 @@ def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_
     for b, (lo, hi) in enumerate(zip(speed_bins[:-1], speed_bins[1:])):
         for k in range(episodes_per_bin):
             seed = base_seed + 100_000 * b + k
-            obs, info = env.reset(seed=seed, options={"speed": rng.uniform(lo, hi), "randomize": randomize})
+            obs, info = env.reset(seed=seed, options={"speed": rng.uniform(lo, hi), "randomize": randomize,
+                                                      "release_delay": release_delay})
             if not info["threat"]:
                 continue
             while True:
@@ -58,27 +62,51 @@ def run_episodes(policy, config, asymmetric, speed_bins, episodes_per_bin, base_
     return rows
 
 
+def in_bin(value, bins, b):
+    lo, hi = bins[b], bins[b + 1]
+    return lo <= value < hi or (b == len(bins) - 2 and value == hi)
+
+
+def rate_with_ci(groups, select):
+    """Save rate and 95% CI over the rows that `select` accepts, for one policy."""
+    per_group, k_all, n_all = [], 0, 0
+    for rows in groups:
+        saved = [r["saved"] for r in rows if select(r)]
+        per_group.append(np.mean(saved) if saved else np.nan)
+        k_all += sum(saved)
+        n_all += len(saved)
+    if len(groups) > 1:
+        mean, lo_ci, hi_ci = t_ci(per_group)
+        method = f"t across {len(groups)} training seeds"
+    else:
+        mean = k_all / n_all if n_all else np.nan
+        lo_ci, hi_ci = wilson_ci(k_all, n_all)
+        method = "Wilson over episodes"
+    return {"save_rate": mean, "ci_lo": lo_ci, "ci_hi": hi_ci, "episodes": n_all, "ci_method": method}
+
+
 def summarize(results, key, bins):
     """results: {policy: [rows per group]}. Returns table rows with mean and CI per bin."""
     table = []
     for name, groups in results.items():
-        for b, (lo, hi) in enumerate(zip(bins[:-1], bins[1:])):
-            per_group, k_all, n_all = [], 0, 0
-            for rows in groups:
-                saved = [r["saved"] for r in rows if lo <= r[key] < hi or (b == len(bins) - 2 and r[key] == hi)]
-                per_group.append(np.mean(saved) if saved else np.nan)
-                k_all += sum(saved)
-                n_all += len(saved)
-            if len(groups) > 1:
-                mean, lo_ci, hi_ci = t_ci(per_group)
-                method = f"t across {len(groups)} training seeds"
-            else:
-                mean = k_all / n_all if n_all else np.nan
-                lo_ci, hi_ci = wilson_ci(k_all, n_all)
-                method = "Wilson over episodes"
-            table.append({"policy": name, "bin_lo": lo, "bin_hi": hi, "bin_center": 0.5 * (lo + hi),
-                          "save_rate": mean, "ci_lo": lo_ci, "ci_hi": hi_ci, "episodes": n_all,
-                          "ci_method": method})
+        for b in range(len(bins) - 1):
+            stats_row = rate_with_ci(groups, lambda r: in_bin(r[key], bins, b))
+            table.append({"policy": name, "bin_lo": bins[b], "bin_hi": bins[b + 1],
+                          "bin_center": 0.5 * (bins[b] + bins[b + 1]), **stats_row})
+    return table
+
+
+def summarize_grid(results, speed_bins, start_bins):
+    """Save rate per (speed bin, start-offset bin) for each policy."""
+    table = []
+    for name, groups in results.items():
+        for i in range(len(speed_bins) - 1):
+            for j in range(len(start_bins) - 1):
+                stats_row = rate_with_ci(groups, lambda r: in_bin(r["speed"], speed_bins, i)
+                                         and in_bin(r["start_offset"], start_bins, j))
+                table.append({"policy": name, "speed_lo": speed_bins[i], "speed_hi": speed_bins[i + 1],
+                              "start_offset_lo": start_bins[j], "start_offset_hi": start_bins[j + 1],
+                              **stats_row})
     return table
 
 
@@ -153,6 +181,8 @@ def main():
     parser.add_argument("--n-speed-bins", type=int, default=6)
     parser.add_argument("--eval-seed", type=int, default=10_000)
     parser.add_argument("--nominal", action="store_true", help="Disable domain randomization in eval")
+    parser.add_argument("--release-delay", type=float, default=0.0,
+                        help="Seconds after the launch until the paddle is free")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
@@ -172,25 +202,28 @@ def main():
         model = PPO.load(run / "final_model.zip", device="cpu")
         print(f"Evaluating {run.name}")
         results["ppo"].append(run_episodes(model, config, asymmetric, speed_bins, args.episodes_per_bin,
-                                           args.eval_seed, randomize))
+                                           args.eval_seed, randomize, args.release_delay))
         run_meta.append({"run": str(run), "seed": run_cfg["meta"]["seed"],
                          "trained_params_version": run_cfg["meta"]["params_version"],
                          "git_hash": run_cfg["meta"]["git_hash"]})
     for policy in (CenterBlocker(), HoldStart()):
         print(f"Evaluating scripted baseline: {policy.name}")
         results[policy.name].append(run_episodes(policy, config, False, speed_bins, args.episodes_per_bin,
-                                                 args.eval_seed, randomize))
+                                                 args.eval_seed, randomize, args.release_delay))
 
     speed_table = summarize(results, "speed", speed_bins)
-    start_table = summarize(results, "start_offset", np.linspace(0.0, 1.0, N_START_BINS + 1))
+    start_bins = np.linspace(0.0, 1.0, N_START_BINS + 1)
+    start_table = summarize(results, "start_offset", start_bins)
     write_csv(out / "save_rate_vs_speed.csv", speed_table)
     write_csv(out / "save_rate_vs_start_offset.csv", start_table)
+    write_csv(out / "save_rate_grid.csv", summarize_grid(results, speed_bins, start_bins))
     subtitle = (f"params {config['meta']['params_version']}, "
                 f"{'domain-randomized' if randomize else 'nominal'} physics, "
-                f"{args.episodes_per_bin} shots per speed bin")
+                f"{args.episodes_per_bin} shots per speed bin, release delay {args.release_delay * 1000:.0f} ms")
     plot(speed_table, start_table, out / "save_rate.png", subtitle)
     meta = {"eval_params_version": config["meta"]["params_version"], "randomize": randomize,
             "episodes_per_bin": args.episodes_per_bin, "eval_seed": args.eval_seed,
+            "release_delay_s": args.release_delay,
             "speed_bins": speed_bins.tolist(), "runs": run_meta, **git_state()}
     (out / "eval_meta.yaml").write_text(yaml.safe_dump(meta, sort_keys=False))
 
