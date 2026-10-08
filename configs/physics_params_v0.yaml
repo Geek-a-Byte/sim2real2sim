@@ -19,14 +19,15 @@ board:
   length_m: 0.3353           # [derived] inner play length = 14.4 - 2*0.6 in
   width_m: 0.1854            # [derived] inner play width = 8.5 - 2*0.6 in
   divider_thickness_m: 0.010 # TODO: measure center divider thickness
-  gate_width_m: 0.050        # TODO: measure. Must be > puck diameter 0.0302
+  gate_width_m: 0.03175      # [user] "a little over 1.19 in"; assumed 1.25 in (0.76 mm clearance per side). TODO: measure
   restitution: 0.85          # TODO: fit by sysid (puck on wood wall)
   paddle_restitution: 0.50   # TODO: fit by sysid
 
 puck:
   radius_m: 0.0151           # [image] 1.19 in diameter. TODO: confirm on size M
   thickness_m: 0.0102        # [image] 0.4 in. TODO: confirm on size M
-  mass_kg: 0.0045            # TODO: weigh. Assumed: volume 7.3e-6 m^3 x wood 500-750 kg/m^3 = 3.6-5.5 g
+  mass_kg: 0.027             # [user] weighed 27 g. CHECK: gives density 3.7 g/cm^3 for a 1.19 x 0.4 in puck;
+                             # wood is 0.5-0.75. 27 g / 6 = 4.5 g, so the scale may have held several pucks.
   friction_kinetic: 0.20     # TODO: fit by sysid (wood on wood)
   restitution: 0.90          # TODO: fit by sysid (puck on puck)
 
@@ -61,7 +62,6 @@ placeholders:
   - board.paddle_restitution
   - puck.radius_m
   - puck.thickness_m
-  - puck.mass_kg
   - puck.friction_kinetic
   - puck.restitution
   - band.band_offset_from_end_wall_m

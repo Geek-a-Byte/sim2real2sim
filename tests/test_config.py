@@ -25,14 +25,14 @@ def write_calibrated(cfg_dir, n):
 def test_v0_loads_and_lists_placeholders(cfg):
     assert cfg["meta"]["params_version"] == "v0"
     assert cfg["meta"]["calibrated"] is False
-    assert "puck.mass_kg" in cfg["meta"]["placeholders"]
+    assert "board.gate_width_m" in cfg["meta"]["placeholders"]
     assert "servo.max_rate_deg_s" in cfg["meta"]["placeholders"]
     assert cfg["servo"]["max_rate_deg_s"] == 300.0
     assert cfg["sim"]["control_hz"] == 30.0
 
 
 def test_strict_rejects_placeholders():
-    with pytest.raises(ConfigError, match="puck.mass_kg"):
+    with pytest.raises(ConfigError, match="board.gate_width_m"):
         load_config("v0", strict=True)
 
 
