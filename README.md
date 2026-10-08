@@ -58,5 +58,10 @@ python -m slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/<run_dirs>
   tracked puck, pan encoder and previous action; the critic also sees the true
   state and the randomized physics (`envs/wrappers.PrivilegedObsWrapper`).
 - The eval writes CSV tables, `save_rate.png` and `eval_meta.yaml` to `results/goalkeeper/`.
+- View episodes top-down in slow motion (true puck, camera frames, Kalman estimate, paddle):
+  `python -m slingpuck.eval.visualize_goalkeeper --run <run_dir>` (live window), or add
+  `--save gk.gif`. Use `--policy center` for the scripted baseline, and `--speed`,
+  `--start-offset`, `--release-delay` to choose the shot.
+- `eval/visualize_mujoco.py` (3D SO-101 view) is out of date and does not run yet.
 - `slingpuck.kinematics.GoalkeeperGeometry` is the one action -> pan -> joint mapping,
   used by both the env and `deploy/lerobot_interface.py`.

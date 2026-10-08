@@ -125,3 +125,16 @@ def test_long_release_delay_ends_at_first_step(cfg):
     env.reset(seed=4, options={"release_delay": 1.0, "start_pan": env.geom.pan_max, "speed": 3.0})
     _, reward, terminated, _, info = env.step(np.zeros(1))
     assert terminated and info["outcome"] == "goal"
+
+
+def test_viewer_records_and_saves_gif(cfg, tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    from slingpuck.eval.visualize_goalkeeper import animate, record_episode
+    env = GoalkeeperEnv(cfg)
+    frames, info = record_episode(env, CenterBlocker(), seed=0, options={"speed": 2.0}, frame_dt=0.01)
+    assert frames and frames[-1]["outcome"] == info["outcome"]
+    assert all(f["outcome"] is None for f in frames if f["t"] < frames[-1]["t"] - 1e-9)
+    assert env.substep_hook is None
+    animate([(frames, info)], env, "test", 0.01, 1.0, str(tmp_path / "gk.gif"))
+    assert (tmp_path / "gk.gif").stat().st_size > 0

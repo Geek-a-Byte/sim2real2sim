@@ -63,6 +63,7 @@ class GoalkeeperEnv(gym.Env):
         self.max_steps = int(np.ceil(self.task["max_episode_s"] / self.control_dt))
         self.geom = GoalkeeperGeometry.from_config(config)
         self.cfg = config
+        self.substep_hook = None  # Optional callable(env, frames) after each physics step (viewer)
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(1,), dtype=np.float32)
         self.observation_space = spaces.Box(-OBS_CLIP, OBS_CLIP, shape=(len(self.POLICY_OBS_NAMES),),
@@ -185,8 +186,11 @@ class GoalkeeperEnv(gym.Env):
         events = self.sim.step(self.physics_dt)
         self.touched |= bool(events.paddle_contacts)
         self.entered |= any(c.direction == -1 for c in events.crossings)
-        for frame in self.camera.observe(self.t, self.sim.pos[0]):
+        frames = self.camera.observe(self.t, self.sim.pos[0])
+        for frame in frames:
             self.tracker.update(frame)
+        if self.substep_hook is not None:
+            self.substep_hook(self, frames)
         return self._check_outcome(events) if self.launched else None
 
     def _check_outcome(self, events):
