@@ -2,9 +2,9 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from src.slingpuck.opponent.scripted_opponent import ScriptedOpponent
-from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from src.slingpuck.envs.sling_env import SlingEnv
+from slingpuck.opponent.scripted_opponent import ScriptedOpponent
+from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from slingpuck.envs.sling_env import SlingEnv
 
 class MatchEnv(gym.Env):
     """
@@ -19,7 +19,7 @@ class MatchEnv(gym.Env):
         self.phase2_policy = phase2_policy
         
         self.decision_dt = 0.20 # 5 Hz high-level decision
-        self.control_dt = 1.0 / config.get('control_hz', 30.0)
+        self.control_dt = 1.0 / config['sim']['control_hz']
         self.steps_per_decision = int(self.decision_dt / self.control_dt)
         
         self.max_time = config['scoring']['max_episode_time_s']

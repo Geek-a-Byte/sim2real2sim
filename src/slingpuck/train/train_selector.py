@@ -1,11 +1,11 @@
 import os
-import yaml
+from slingpuck.config import load_config
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
-from src.slingpuck.envs.match_env import MatchEnv
-from src.slingpuck.eval.vulnerability_window import run_rule_based_baseline
+from slingpuck.envs.match_env import MatchEnv
+from slingpuck.eval.vulnerability_window import run_rule_based_baseline
 
 def train_and_evaluate_ablation(tell_strength, config, phase1_model, phase2_model, log_dir):
     config['opponent']['tell_strength'] = tell_strength
@@ -62,8 +62,7 @@ def train_and_evaluate_ablation(tell_strength, config, phase1_model, phase2_mode
     return model_path
 
 if __name__ == "__main__":
-    with open("configs/physics_params.dev.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    config = load_config("latest")
         
     log_dir = "logs/selector_ablations"
     os.makedirs(log_dir, exist_ok=True)

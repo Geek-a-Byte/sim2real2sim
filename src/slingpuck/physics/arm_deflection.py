@@ -1,5 +1,3 @@
-import pybullet as p
-import pybullet_data
 import numpy as np
 
 class DeflectionModel:
@@ -8,10 +6,12 @@ class DeflectionModel:
     Can operate in a fast analytical mode or query a PyBullet URDF stub.
     """
     def __init__(self, config, use_pybullet=False):
-        self.compliance = config['arm'].get('deflection_compliance_m_per_n', 0.001)
         self.use_pybullet = use_pybullet
-        
+        self.compliance = config['arm']['deflection_compliance_m_per_n']
+
         if self.use_pybullet:
+            import pybullet as p
+            import pybullet_data
             self.physics_client = p.connect(p.DIRECT)
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
             # TODO: Replace plane.urdf with actual SO-101 LeRobot URDF path
@@ -35,5 +35,6 @@ class DeflectionModel:
         return actual_pullback
         
     def __del__(self):
-        if self.use_pybullet:
+        if getattr(self, 'use_pybullet', False):
+            import pybullet as p
             p.disconnect(self.physics_client)

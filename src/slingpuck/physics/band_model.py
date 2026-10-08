@@ -4,6 +4,9 @@ class ElasticBand:
     def __init__(self, config):
         self.k = config['stiffness_k_n_m']
         self.hysteresis = config['hysteresis_loss_factor']
+        self.reset()
+
+    def reset(self):
         self.last_stretch = 0.0
 
     def get_force(self, current_stretch):

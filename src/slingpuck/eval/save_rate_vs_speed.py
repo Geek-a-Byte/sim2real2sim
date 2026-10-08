@@ -1,12 +1,11 @@
 import numpy as np
-import yaml
+from slingpuck.config import load_config
 from stable_baselines3 import PPO
-from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
+from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
 import matplotlib.pyplot as plt
 
-def evaluate_save_rate(model_path, config_path, num_episodes=500):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+def evaluate_save_rate(model_path, params_version="latest", num_episodes=500):
+    config = load_config(params_version)
         
     env = GoalkeeperEnv(config)
     model = PPO.load(model_path)
@@ -62,5 +61,5 @@ def evaluate_save_rate(model_path, config_path, num_episodes=500):
 
 if __name__ == "__main__":
     # Example usage (update paths to your trained run)
-    # evaluate_save_rate("logs/ppo_goalkeeper_latest/final_model", "configs/physics_params.dev.yaml")
+    # evaluate_save_rate("logs/ppo_goalkeeper_latest/final_model", "v0")
     pass

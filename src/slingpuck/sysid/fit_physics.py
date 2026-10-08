@@ -89,5 +89,5 @@ def run_sysid(csv_path, base_config_path, output_dir="configs/"):
 
 if __name__ == "__main__":
     # Example usage:
-    # run_sysid("data/real_logs/real_shots_v1.csv", "configs/physics_params.dev.yaml")
+    # run_sysid("data/real_logs/real_shots_v1.csv", "configs/physics_params_v0.yaml")
     pass

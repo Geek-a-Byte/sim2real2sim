@@ -1,0 +1,75 @@
+# Physics parameters, version 0: UNCALIBRATED.
+# sysid writes physics_params_v1.yaml, v2, ... Load by version with
+# slingpuck.config.load_config(params_version="v0" | "latest").
+#
+# Reference board: moopok Fast Sling Puck, size M (Amazon B086KWXPTY).
+# Provenance tags: [spec] = listing text, [image] = listing image (size S, assumed
+# same for M), [derived] = computed from tagged values, [TODO] = must be measured
+# or fitted. Every [TODO] value is also listed under `placeholders` below, so
+# load_config(strict=True) refuses to run with it.
+version: 0
+calibrated: false
+
+board:
+  outer_length_m: 0.3658     # [spec] 14.4 in
+  outer_width_m: 0.2159      # [spec] 8.5 in
+  outer_height_m: 0.0249     # [spec] 0.98 in ("tabletop thickness 2.5 cm" = same value)
+  board_mass_kg: 0.360       # [spec] 360 g; not used by sim (board is fixed)
+  wall_thickness_m: 0.01524  # [image] 0.6 in frame width. TODO: measure on size M
+  length_m: 0.3353           # [derived] inner play length = 14.4 - 2*0.6 in
+  width_m: 0.1854            # [derived] inner play width = 8.5 - 2*0.6 in
+  divider_thickness_m: 0.010 # TODO: measure center divider thickness
+  gate_width_m: 0.050        # TODO: measure. Must be > puck diameter 0.0302
+  restitution: 0.85          # TODO: fit by sysid (puck on wood wall)
+  paddle_restitution: 0.50   # TODO: fit by sysid
+
+puck:
+  radius_m: 0.0151           # [image] 1.19 in diameter. TODO: confirm on size M
+  thickness_m: 0.0102        # [image] 0.4 in. TODO: confirm on size M
+  mass_kg: 0.0045            # TODO: weigh. Assumed: volume 7.3e-6 m^3 x wood 500-750 kg/m^3 = 3.6-5.5 g
+  friction_kinetic: 0.20     # TODO: fit by sysid (wood on wood)
+  restitution: 0.90          # TODO: fit by sysid (puck on puck)
+
+band:
+  # Band spans the inner width, anchored at the side walls, at an unknown
+  # distance from the end wall.
+  anchor_left_xy_m: [-0.0927, 0.0]  # [derived] -width_m/2, relative to band line center
+  anchor_right_xy_m: [0.0927, 0.0]  # [derived] +width_m/2
+  band_offset_from_end_wall_m: 0.05 # TODO: measure
+  rest_length_m: 0.1854      # [derived] assumes band spans inner width. TODO: confirm
+  max_stretch_m: 0.12        # TODO: measure. Must be < length_m/2 (0.168)
+  stiffness_k_n_m: 50.0      # TODO: measure force-vs-stretch (M3 replaces with nonlinear curve)
+  hysteresis_loss_factor: 0.15 # TODO: fit by sysid
+
+arm:
+  deflection_compliance_m_per_n: 0.001  # TODO: fit by sysid
+
+camera:
+  fps: 60                    # Plan default
+  latency_s: 0.05            # TODO: measure (glass-to-tracker latency)
+  noise_std_m: 0.003         # TODO: measure (static puck, std of tracked position)
+  dropout_prob: 0.02         # TODO: measure (fraction of frames with no detection)
+
+# Optional overrides of configs/servo.yaml values that sysid fits (e.g. latency).
+servo: {}
+
+placeholders:
+  - board.wall_thickness_m
+  - board.divider_thickness_m
+  - board.gate_width_m
+  - board.restitution
+  - board.paddle_restitution
+  - puck.radius_m
+  - puck.thickness_m
+  - puck.mass_kg
+  - puck.friction_kinetic
+  - puck.restitution
+  - band.band_offset_from_end_wall_m
+  - band.rest_length_m
+  - band.max_stretch_m
+  - band.stiffness_k_n_m
+  - band.hysteresis_loss_factor
+  - arm.deflection_compliance_m_per_n
+  - camera.latency_s
+  - camera.noise_std_m
+  - camera.dropout_prob

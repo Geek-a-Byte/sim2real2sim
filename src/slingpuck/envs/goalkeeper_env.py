@@ -2,9 +2,9 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from src.slingpuck.physics.servo_model import ServoModel
-from src.slingpuck.sensing.camera_model import CameraModel
-from src.slingpuck.sensing.kalman_tracker import KalmanTracker
+from slingpuck.physics.servo_model import ServoModel
+from slingpuck.sensing.camera_model import CameraModel
+from slingpuck.sensing.kalman_tracker import KalmanTracker
 
 class GoalkeeperEnv(gym.Env):
     """
@@ -14,7 +14,7 @@ class GoalkeeperEnv(gym.Env):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.control_dt = 1.0 / config.get('control_hz', 30.0)
+        self.control_dt = 1.0 / config['sim']['control_hz']
         self.physics_dt = 0.005 # Finer resolution for collision/physics
         self.physics_steps_per_control = int(self.control_dt / self.physics_dt)
         
@@ -42,8 +42,9 @@ class GoalkeeperEnv(gym.Env):
         
         # Re-initialize M1 models
         self.servo = ServoModel(self.config['servo'], self.physics_dt)
-        self.camera = CameraModel(self.config['camera'], self.physics_dt)
-        self.tracker = KalmanTracker(self.control_dt)
+        self.camera = CameraModel(self.config['camera'], rng=self.np_random)
+        self.tracker = KalmanTracker.from_config(self.config)
+        self.t = 0.0
         
         # Spawn puck at the far side, aiming towards the gate
         self.puck_y = self.board_length / 2.0
@@ -101,10 +102,10 @@ class GoalkeeperEnv(gym.Env):
                 self.puck_vx *= -self.config['board']['restitution']
                 self.puck_x = np.sign(self.puck_x) * (self.board_width / 2.0 - self.puck_radius)
 
-            # 4. Camera Step
-            cam_meas = self.camera.step(self.puck_x, self.puck_y, self.physics_dt)
-            if cam_meas is not None:
-                self.latest_cam_meas = cam_meas
+            # 4. Camera Step: the tracker gets each frame once, at its arrival time
+            self.t += self.physics_dt
+            for frame in self.camera.observe(self.t, (self.puck_x, self.puck_y)):
+                self.tracker.update(frame)
 
             # 5. Gate & Block Collision Check (y <= puck_radius)
             if self.puck_y <= self.puck_radius and not terminated:
@@ -120,18 +121,14 @@ class GoalkeeperEnv(gym.Env):
                     # Missed gate entirely, bounced back up or stopped
                     terminated = True 
 
-        # Update Kalman Tracker once per control step
-        self.tracker.predict()
-        if hasattr(self, 'latest_cam_meas'):
-            self.tracker.update(self.latest_cam_meas)
-            
         return self._get_obs(), reward, terminated, truncated, {}
 
     def _get_obs(self):
-        track_pos, track_vel = self.tracker.x[:2].flatten(), self.tracker.x[2:].flatten()
+        est = self.tracker.estimate(self.t)
+        track_pos, track_vel = (est[0], est[1]) if est is not None else (np.zeros(2), np.zeros(2))
         return np.array([
-            track_pos[0], track_pos[1], 
+            track_pos[0], track_pos[1],
             track_vel[0], track_vel[1],
-            self.servo.current_pos,
-            self.servo.current_vel
+            float(self.servo.pos),
+            float(self.servo.vel)
         ], dtype=np.float32)

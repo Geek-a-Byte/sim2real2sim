@@ -1,5 +1,5 @@
 import time
-import yaml
+from slingpuck.config import load_config
 import mujoco
 import mujoco.viewer
 import numpy as np
@@ -7,9 +7,8 @@ from stable_baselines3 import PPO
 
 from slingpuck.envs.goalkeeper_env import GoalkeeperEnv
 
-def visualize(model_path, config_path):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
+def visualize(model_path, params_version="latest"):
+    config = load_config(params_version)
         
     env = GoalkeeperEnv(config)
     policy = PPO.load(model_path)
@@ -49,7 +48,7 @@ def visualize(model_path, config_path):
                 mj_data.qpos[puck_y_id] = env.puck_y - 0.20 
                 
                 # Sync active Pan joint
-                mj_data.qpos[pan_id] = -env.servo.current_pos 
+                mj_data.qpos[pan_id] = -float(env.servo.pos) 
                 
                 # Lock the rest of the arm
                 for j_id, j_angle in zip(locked_joint_ids, locked_joint_angles):
@@ -67,6 +66,6 @@ if __name__ == "__main__":
     
     import os
     if os.path.exists(model_file):
-        visualize(model_file, "configs/physics_params.dev.yaml")
+        visualize(model_file)
     else:
         print(f"Model not found at {model_file}. Run training first.")

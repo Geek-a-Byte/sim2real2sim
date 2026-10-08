@@ -6,7 +6,7 @@ import onnxruntime as ort
 class SO101Controller:
     def __init__(self, onnx_path, config):
         self.config = config
-        self.control_hz = config.get('control_hz', 30.0)
+        self.control_hz = config['sim']['control_hz']
         self.period = 1.0 / self.control_hz
         
         # Load ONNX Session
@@ -14,7 +14,7 @@ class SO101Controller:
         self.input_name = self.session.get_inputs()[0].name
         
         # Hardware limits
-        self.max_rate_rad_s = config['servo']['max_rate_rad_s']
+        self.max_rate_rad_s = np.deg2rad(config['servo']['max_rate_deg_s'])
         self.max_torque = 1.5 # N.m (Feetech STS3215 spec)
         
         # Hardware init (Stub)
@@ -42,7 +42,8 @@ class SO101Controller:
         Maps raw policy action to rate-limited hardware commands.
         """
         target_norm = np.clip(action_vector[0], -1.0, 1.0)
-        # Assuming M2 mapping where 1.0 = max_pan_angle (approx 0.5 rad)
+        # FIXME(M2): sim maps 1.0 to GoalkeeperEnv.max_pan_angle (~0.19 rad), not 0.5 rad.
+        # M2 moves this mapping into one shared function used by sim and robot.
         target_angle = target_norm * 0.5 
         
         # Apply safety rate limits in software before dispatch
@@ -82,7 +83,7 @@ class SO101Controller:
 
 if __name__ == "__main__":
     # Example execution stub
-    # config = yaml.safe_load(open("configs/physics_params.dev.yaml"))
+    # config = load_config("latest", strict=True)
     # controller = SO101Controller("deploy/gk_policy.onnx", config)
     # controller.run_loop()
     pass

@@ -1,0 +1,14 @@
+# Feetech STS3215 position servo model (SO-101 joints).
+# Pipeline: command latency -> deadband -> first-order lag -> rate limit.
+# physics_params_vN.yaml `servo:` section overrides these values after sysid.
+servo:
+  max_rate_deg_s: 300.0      # Plan default (~50 RPM). TODO: measure under load on SO-101
+  lag_tau_s: 0.05            # TODO: measure (step response time constant)
+  deadband_deg: 0.5          # TODO: measure
+  command_latency_s: 0.03    # TODO: measure (bus write to motion onset)
+
+placeholders:
+  - servo.max_rate_deg_s
+  - servo.lag_tau_s
+  - servo.deadband_deg
+  - servo.command_latency_s

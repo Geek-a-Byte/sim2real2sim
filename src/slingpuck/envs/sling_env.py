@@ -2,9 +2,8 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-from src.slingpuck.physics.band_model import ElasticBand
-from src.slingpuck.physics.arm_deflection import DeflectionModel
-from src.slingpuck.sensing.camera_model import CameraModel
+from slingpuck.physics.band_model import ElasticBand
+from slingpuck.physics.arm_deflection import DeflectionModel
 
 class SlingEnv(gym.Env):
     """
@@ -16,7 +15,7 @@ class SlingEnv(gym.Env):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.dt = 1.0 / config.get('control_hz', 30.0)
+        self.dt = 1.0 / config['sim']['control_hz']
         
         self.gate_width = config['board']['gate_width_m']
         self.puck_radius = config['puck']['radius_m']
@@ -25,7 +24,7 @@ class SlingEnv(gym.Env):
         
         self.band = ElasticBand(config['band'])
         self.arm_model = DeflectionModel(config)
-        self.camera = CameraModel(config['camera'], self.dt)
+        self.noise_std = config['camera']['noise_std_m']
         
         # Action: [strike_angle (rad), pull_back_distance (m)]
         # Scaled to [-1, 1] for RL stability
@@ -37,7 +36,8 @@ class SlingEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        
+        self.band.reset()
+
         # Spawn puck randomly on the agent's side
         self.puck_x = self.np_random.uniform(-0.15, 0.15)
         self.puck_y = self.np_random.uniform(0.1, 0.25) 
@@ -84,9 +84,7 @@ class SlingEnv(gym.Env):
         return self._get_obs(), reward, terminated, False, {"x_at_gate": x_at_gate, "exit_vel": velocity_mag}
 
     def _get_obs(self):
-        # Simulate camera measurement with noise/latency
-        meas = self.camera.step(self.puck_x, self.puck_y, self.dt)
-        meas_x = meas[0] if meas else self.puck_x
-        meas_y = meas[1] if meas else self.puck_y
-        
+        # Static puck: one noisy camera measurement. Never fall back to ground truth.
+        # TODO(M3): use CameraModel + KalmanTracker over the pull-back motion.
+        meas_x, meas_y = np.array([self.puck_x, self.puck_y]) + self.np_random.normal(0.0, self.noise_std, 2)
         return np.array([meas_x, meas_y, self.band_disp_x, self.band_disp_y], dtype=np.float32)
