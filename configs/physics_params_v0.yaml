@@ -20,14 +20,14 @@ board:
   width_m: 0.1854            # [derived] inner play width = 8.5 - 2*0.6 in
   divider_thickness_m: 0.010 # TODO: measure center divider thickness
   wall_height_m: 0.015       # TODO: measure wall/divider height above the play surface (MuJoCo only)
-  gate_width_m: 0.03175      # [user] "a little over 1.19 in"; assumed 1.25 in (0.76 mm clearance per side). TODO: measure
+  gate_width_m: 0.034        # [user] measured 3.4 cm (4.3 mm clearance per side for the 1 in puck)
   restitution: 0.85          # TODO: fit by sysid (puck on wood wall)
   paddle_restitution: 0.50   # TODO: fit by sysid
 
 puck:
-  radius_m: 0.0151           # [image] 1.19 in diameter. TODO: confirm on size M
+  radius_m: 0.0127           # [user] 1 in diameter. TODO: confirm in mm (calipers)
   thickness_m: 0.0102        # [image] 0.4 in. TODO: confirm on size M
-  mass_kg: 0.027             # [user] weighed 27 g. CHECK: gives density 3.7 g/cm^3 for a 1.19 x 0.4 in puck;
+  mass_kg: 0.027             # [user] weighed 27 g. CHECK: gives density 5.2 g/cm^3 for a 1 x 0.4 in puck;
                              # wood is 0.5-0.75. 27 g / 6 = 4.5 g, so the scale may have held several pucks.
   friction_kinetic: 0.20     # TODO: fit by sysid (wood on wood)
   restitution: 0.90          # TODO: fit by sysid (puck on puck)
@@ -62,7 +62,8 @@ robot:
   paddle_height_m: 0.020     # TODO: measure end-effector blocking face height (MuJoCo only)
   paddle_mass_kg: 0.020      # TODO: weigh the end effector (MuJoCo only)
   paddle_clearance_m: 0.001  # Gap between the paddle bottom and the play surface (design)
-  base_z_m: 0.0              # TODO: measure arm base height relative to the play surface (MuJoCo only)
+  base_z_m: -0.0197          # [derived] lightbox: robot on the lightbox floor, board on the mat (mat top 0.98 cm,
+                             # board base 0.99 cm = outer height - wall height). TODO: measure (MuJoCo only)
 
 camera:
   fps: 60                    # Plan default
@@ -76,7 +77,6 @@ servo: {}
 placeholders:
   - board.wall_thickness_m
   - board.divider_thickness_m
-  - board.gate_width_m
   - board.restitution
   - board.paddle_restitution
   - puck.radius_m

@@ -55,6 +55,7 @@ class ReleaseResult:
     release_time_s: float
     band_work_j: float      # Work the band did on the puck (before energy_transfer)
     launched: bool = True   # False if the puck stopped behind the band line
+    path: np.ndarray | None = None  # (n, 3) rows of [t, x, y] during the release, if recorded
 
 
 class BandModel:
@@ -114,7 +115,9 @@ class BandModel:
         return float(self.tension_load(self.elongation(pos))) * self.direction_sum(pos)
 
     # ------------------------------------------------------------ release
-    def release(self, pull_pos, mass: float, mu: float, dt: float = 1e-4, max_t: float = 0.3) -> ReleaseResult:
+    def release(self, pull_pos, mass: float, mu: float, dt: float = 1e-4, max_t: float = 0.3,
+                record: bool = False) -> ReleaseResult:
+        """record=True keeps the puck path (for viewers)."""
         pos = np.array(pull_pos, dtype=float)
         if pos[1] >= self.band_y:
             raise ValueError("pull position must be behind the band line (y < band_y)")
@@ -122,6 +125,12 @@ class BandModel:
         vel = np.zeros(2)
         work, t = 0.0, 0.0
         decel = mu * GRAVITY
+        path = [(0.0, pos[0], pos[1])] if record else None
+
+        def stopped():
+            return ReleaseResult(pos, np.zeros(2), t, work, launched=False,
+                                 path=np.array(path) if record else None)
+
         while pos[1] < self.band_y:
             if t > max_t:
                 raise RuntimeError("band release did not finish; check band parameters")
@@ -131,17 +140,22 @@ class BandModel:
             if speed > 0.0:
                 acc = acc - decel * vel / speed
             elif np.linalg.norm(acc) <= decel:
-                return ReleaseResult(pos, np.zeros(2), t, work, launched=False)  # Static friction holds it
+                return stopped()  # Static friction holds it
             new_vel = vel + acc * dt
             if speed > 0.0 and float(new_vel @ vel) <= 0.0:
-                return ReleaseResult(pos, np.zeros(2), t, work, launched=False)  # Friction stopped it
+                return stopped()  # Friction stopped it
             step = new_vel * dt
             work += float(force @ step)
             prev = pos.copy()
             pos = pos + step
             vel = new_vel
             t += dt
+            if record:
+                path.append((t, pos[0], pos[1]))
         # Interpolate back to the band line.
         frac = (self.band_y - prev[1]) / (pos[1] - prev[1])
         exit_pos = prev + frac * (pos - prev)
-        return ReleaseResult(exit_pos, vel * math.sqrt(self.p.energy_transfer), t, work)
+        if record:
+            path[-1] = (t - (1.0 - frac) * dt, exit_pos[0], exit_pos[1])
+        return ReleaseResult(exit_pos, vel * math.sqrt(self.p.energy_transfer), t, work,
+                             path=np.array(path) if record else None)

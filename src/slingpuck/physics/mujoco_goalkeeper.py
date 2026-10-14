@@ -42,6 +42,7 @@ from src.slingpuck.config import REPO_ROOT
 from src.slingpuck.kinematics import GoalkeeperGeometry
 from src.slingpuck.physics.backend import GateCrossing, PaddleState, PuckPhysicsBackend, StepEvents
 from src.slingpuck.physics.servo_model import latency_steps
+from src.slingpuck.workspace import add_lightbox, board_floor_thickness
 
 SO101_XML = REPO_ROOT / "assets" / "mujoco" / "robotstudio_so101" / "so101.xml"
 HOLD_JOINTS = ("shoulder_lift", "elbow_flex", "wrist_flex")
@@ -106,6 +107,27 @@ def _divider_boxes(cfg):
 WALL_PAIRS = ("wall_left", "wall_right", "wall_agent", "wall_opponent", "divider_left", "divider_right")
 
 
+def add_board(body, cfg: dict):
+    """Play surface, walls and the divider with its gate, in the board frame of `body` (visual; see pairs)."""
+    board = cfg["board"]
+    hw, hl = 0.5 * board["width_m"], 0.5 * board["length_m"]
+    wt, wh = board["wall_thickness_m"], board["wall_height_m"]
+    wood, edge = [0.86, 0.78, 0.64, 1], [0.62, 0.50, 0.33, 1]
+
+    def box(name, center, half, rgba):
+        return body.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, pos=list(center), size=list(half),
+                             rgba=rgba, contype=0, conaffinity=0)
+
+    ft = board_floor_thickness(cfg)
+    box("surface", (0, 0, -0.5 * ft), (hw + wt, hl + wt, 0.5 * ft), wood)
+    box("wall_left", (-hw - wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
+    box("wall_right", (hw + wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
+    box("wall_agent", (0, -hl - wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
+    box("wall_opponent", (0, hl + wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
+    for name, (xmin, xmax, ymin, ymax) in zip(("divider_left", "divider_right"), _divider_boxes(cfg)):
+        box(name, ((xmin + xmax) / 2, (ymin + ymax) / 2, wh / 2), ((xmax - xmin) / 2, (ymax - ymin) / 2, wh / 2), edge)
+
+
 def _build_spec(cfg: dict, layout: SceneLayout, pose: ArmHoldPose | None) -> mujoco.MjSpec:
     board, puck, robot = cfg["board"], cfg["puck"], cfg["robot"]
     spec = mujoco.MjSpec.from_file(str(SO101_XML))
@@ -118,21 +140,7 @@ def _build_spec(cfg: dict, layout: SceneLayout, pose: ArmHoldPose | None) -> muj
     base.quat = layout.base_quat.tolist()
 
     world = spec.worldbody
-    hw, hl = 0.5 * board["width_m"], 0.5 * board["length_m"]
-    wt, wh = board["wall_thickness_m"], board["wall_height_m"]
-    wood, edge = [0.86, 0.78, 0.64, 1], [0.62, 0.50, 0.33, 1]
-
-    def box(name, center, half, rgba):
-        return world.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, pos=list(center), size=list(half),
-                              rgba=rgba, contype=0, conaffinity=0)
-
-    box("surface", (0, 0, -0.005), (hw + wt, hl + wt, 0.005), wood)
-    box("wall_left", (-hw - wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
-    box("wall_right", (hw + wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
-    box("wall_agent", (0, -hl - wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
-    box("wall_opponent", (0, hl + wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
-    for name, (xmin, xmax, ymin, ymax) in zip(("divider_left", "divider_right"), _divider_boxes(cfg)):
-        box(name, ((xmin + xmax) / 2, (ymin + ymax) / 2, wh / 2), ((xmax - xmin) / 2, (ymax - ymin) / 2, wh / 2), edge)
+    add_board(world, cfg)
 
     pb = world.add_body(name="puck", pos=[0.0, 0.0, 0.5 * puck["thickness_m"]])
     for name, jtype, axis in zip(PUCK_JOINTS, ("slide", "slide", "hinge"), ((1, 0, 0), (0, 1, 0), (0, 0, 1))):
@@ -149,22 +157,31 @@ def _build_spec(cfg: dict, layout: SceneLayout, pose: ArmHoldPose | None) -> muj
             rgba=[0.92, 0.41, 0.20, 1], contype=0, conaffinity=0)
         _add_pairs(spec, cfg)
 
-    # Visual only: table, sky, lights, cameras.
-    world.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.0, 1.0, 0.01], pos=[0, 0, -0.0101],
-                   rgba=[0.42, 0.40, 0.37, 1], contype=0, conaffinity=0)
+    # Visual only: the lightbox workspace (table, foam box, mat, C920) placed at the robot base, sky, lights, cameras.
+    add_lightbox(world.add_body(name="lightbox", pos=layout.base_pos.tolist(), quat=layout.base_quat.tolist()))
     spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX, builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
                      rgb1=[0.86, 0.89, 0.93], rgb2=[0.55, 0.60, 0.68], width=512, height=3072)
-    spec.visual.headlight.ambient = [0.35, 0.35, 0.35]
-    spec.visual.headlight.diffuse = [0.55, 0.55, 0.55]
-    world.add_light(pos=[0, -0.1, 1.2], dir=[0, 0, -1], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-                    diffuse=[0.6, 0.6, 0.6])
+    # The lightbox adds its overhead light (add_lightbox); these only fill in, so the white board is not overexposed.
+    spec.visual.headlight.ambient = [0.25, 0.25, 0.25]
+    spec.visual.headlight.diffuse = [0.3, 0.3, 0.3]
     world.add_light(pos=[0.6, 0.6, 0.8], dir=[-0.5, -0.5, -0.7], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-                    diffuse=[0.35, 0.35, 0.35], castshadow=0)
+                    diffuse=[0.25, 0.25, 0.25], castshadow=0)
+    # Cameras stay inside the lightbox (its back wall is 3 cm behind the board's far end).
     world.add_camera(name="top", pos=[0, -0.02, 0.75], quat=[1, 0, 0, 0], fovy=45)
-    world.add_camera(name="side", pos=[0.42, -0.42, 0.32], xyaxes=[0.707, 0.707, 0, -0.33, 0.33, 0.88], fovy=50)
-    # From the opponent side, above the board, looking at the gate and the paddle.
-    world.add_camera(name="gate", pos=[0, 0.30, 0.24], xyaxes=[-1, 0, 0, 0, -0.62, 0.785], fovy=45)
+    world.add_camera(name="side", pos=[0.30, -0.30, 0.32], xyaxes=_xyaxes([0.30, -0.30, 0.32], [0.0, -0.03, 0.0]),
+                     fovy=50)
+    # Above the opponent end, looking at the gate and the paddle.
+    world.add_camera(name="gate", pos=[0, 0.19, 0.34], xyaxes=_xyaxes([0, 0.19, 0.34], [0.0, -0.03, 0.0]), fovy=50)
     return spec
+
+
+def _xyaxes(pos, target):
+    """Camera xyaxes looking from pos at target, world z up in the image."""
+    f = np.asarray(target, float) - np.asarray(pos, float)
+    f /= np.linalg.norm(f)
+    x = np.cross(f, [0.0, 0.0, 1.0])
+    x /= np.linalg.norm(x)
+    return np.concatenate([x, np.cross(x, f)]).tolist()
 
 
 def _stiffness(cfg) -> float:
@@ -195,6 +212,19 @@ class ContactCalibration:
             raise ValueError(f"{kind} restitution {restitution} outside the calibrated range [{lo:.3f}, {hi:.3f}]")
         b = float(np.interp(restitution, e_grid[order], self.damping[order]))
         return np.array([-self.stiffness, -b])
+
+
+def apply_puck_friction(model, data, vx_adr: int, vy_adr: int, body: int, mu: float):
+    """Coulomb sliding friction as an applied force for the next mj_step; stop without reversal."""
+    vx, vy = data.qvel[vx_adr], data.qvel[vy_adr]
+    speed = math.hypot(vx, vy)
+    decel = mu * GRAVITY
+    if 0.0 < speed <= decel * model.opt.timestep:
+        data.qvel[vx_adr] = data.qvel[vy_adr] = 0.0
+        speed = 0.0
+    f = model.body_mass[body] * decel / speed if speed > 0.0 else 0.0
+    data.qfrc_applied[vx_adr] = -f * vx
+    data.qfrc_applied[vy_adr] = -f * vy
 
 
 def _qadr(model, names):
@@ -446,16 +476,7 @@ class MujocoGoalkeeperSim(PuckPhysicsBackend):
         touched = False
         vx_adr, vy_adr = self._puck_vadr[0], self._puck_vadr[1]
         for _ in range(max(1, int(round(dt / self.dt)))):
-            # Coulomb sliding friction as an applied force; stop without reversal.
-            vx, vy = d.qvel[vx_adr], d.qvel[vy_adr]
-            speed = math.hypot(vx, vy)
-            decel = self._mu * GRAVITY
-            if 0.0 < speed <= decel * self.dt:
-                d.qvel[vx_adr] = d.qvel[vy_adr] = 0.0
-                speed = 0.0
-            f = self.model.body_mass[self._puck_body] * decel / speed if speed > 0.0 else 0.0
-            d.qfrc_applied[vx_adr] = -f * vx
-            d.qfrc_applied[vy_adr] = -f * vy
+            apply_puck_friction(self.model, d, vx_adr, vy_adr, self._puck_body, self._mu)
             mujoco.mj_step(self.model, d)
             if d.ncon:
                 geoms = d.contact.geom[:d.ncon]

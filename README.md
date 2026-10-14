@@ -129,6 +129,9 @@ python   -m src.slingpuck.eval.save_rate_vs_speed --runs logs/goalkeeper/goalkee
 # Phase 2: train the sling shot and evaluate the gate success rate
 python -m src.slingpuck.train.train_sling
 python -m src.slingpuck.eval.hole_rate --runs logs/sling/sling_v0_s*_*
+# MuJoCo: the SO-101 grasps the puck, pulls it back against the band and shoots it
+mjpython -m src.slingpuck.eval.view_mujoco_sling --run logs/sling/<run_dir>         # live 3D window
+python   -m src.slingpuck.eval.view_mujoco_sling --policy center_correct --save sling3d.gif
 
 # Sysid: fit physics from logs, write a new params version, check sim vs real
 python -m src.slingpuck.sysid.synthetic --out data/real_logs/synthetic          # synthetic logs to try it
@@ -197,6 +200,18 @@ src/slingpuck/
     stats.py               Wilson and Student-t confidence intervals
     visualize_goalkeeper.py  Top-down slow-motion viewer (window or GIF)
     view_mujoco.py         3D MuJoCo viewer (mjpython window or GIF)
+    view_mujoco_sling.py   Phase 2 3D MuJoCo viewer: grasp, slide, pull against the band, release, flight
+  workspace.py             Lightbox, mat and C920 (measured), shared by all MuJoCo scenes
+  so101_slingpuck.py       The full scene in the lightbox: viewer, --save, --no-viewer
+  twin/
+    calibration.py         Board homography from clicked corners, parallax correction
+    detector.py            Puck detection in the overhead image
+    tracker.py             Multi-puck Kalman tracking with fixed puck count
+    scene.py               MuJoCo twin scene, arm mask, predicted paths
+    logs.py                tracks.csv, shots.csv (sysid format) from tracks and robot logs
+    replay.py              Run the twin on a recorded session
+    synthetic.py           Synthetic session with hidden true physics
+    evaluate.py            Twin vs ground truth on a synthetic session
     match_eval.py          Phase 3 eval: win/loss, puck difference, tell sweep, hand ablation
   sysid/
     schema.py              Log schemas and loaders
@@ -235,15 +250,15 @@ Each value in `configs/physics_params_v0.yaml` has a source tag:
 | Outer length × width × height | 0.3658 × 0.2159 × 0.0249 m (14.4 × 8.5 × 0.98 in) | spec |
 | Frame (wall) thickness | 0.01524 m (0.6 in) | image |
 | Inner play area | 0.3353 × 0.1854 m | derived |
-| Gate width | 0.03175 m (1.25 in) | user: "a little over 1.19 in". Still TODO |
+| Gate width | 0.034 m | user: measured 3.4 cm (4.3 mm per side) |
 | Divider thickness | 0.010 m | TODO |
-| Puck diameter × thickness | 0.0302 × 0.0102 m (1.19 × 0.4 in) | image |
+| Puck diameter × thickness | 0.0254 × 0.0102 m (1 × 0.4 in) | user (diameter), image (thickness) |
 | Puck mass | 0.027 kg | user. See the note below |
 | Band rest length | 0.1854 m (assumed to span the inner width) | derived |
 | Band distance from the end wall | 0.05 m | TODO |
 
-**Note on the puck mass:** 27 g in a 1.19 × 0.4 in puck gives a density of
-3.7 g/cm³. Wood is 0.5 to 0.75 g/cm³. 27 g / 6 = 4.5 g, which is the expected
+**Note on the puck mass:** 27 g in a 1 × 0.4 in puck gives a density of
+5.2 g/cm³. Wood is 0.5 to 0.75 g/cm³. 27 g / 6 = 4.5 g, which is the expected
 mass of one wood puck. Weigh one puck alone to confirm. The mass does not affect
 Phase 1. It does affect the launch speed in Phase 2.
 
@@ -293,7 +308,7 @@ cfg["meta"]                          # params_version, params_file, calibrated, 
 
 ```yaml
 puck.friction_kinetic: {scale: [0.7, 1.3]}           # value * U(0.7, 1.3)
-board.gate_width_m:    {range: [0.0307, 0.0330]}     # U(lo, hi)
+board.gate_width_m:    {range: [0.0335, 0.0345]}     # U(lo, hi)
 board.restitution:     {scale: [0.85, 1.1], clip: [0.0, 1.0]}
 ```
 
@@ -548,6 +563,29 @@ transfer to a different servo model.
 
 ## MuJoCo simulation
 
+### The workspace: lightbox, mat, board (`so101_slingpuck.py`, `workspace.py`)
+
+```bash
+python -m src.slingpuck.so101_slingpuck               # interactive viewer (Ctrl + right drag flicks a puck)
+python -m src.slingpuck.so101_slingpuck --no-viewer   # build and check only
+python -m src.slingpuck.so101_slingpuck --save        # write assets/mujoco/robotstudio_so101/so101_slingpuck.xml
+```
+
+Same structure as the course's `so101_lightbox.py`, and its measured lightbox: white foam box
+(76.2 cm wide, 50.8 cm high), black mat 7.9 cm in front of the turning axis, and the C920 on the left
+wall (camera `c920`). Frame: origin at the robot base, x forward, y left, z up. For the game, a human
+plays face to face with the robot: the back wall is removed, and the floor and side walls run on to
+`workspace.FAR_X` = 65 cm (TODO: measure), so the game stays between the side walls. The board lies on
+the mat, lengthwise, centered, with the robot behind the agent end wall; with the current
+`robot.base_xy_m` its near end is 3.5 cm in front of the turning axis, and its far end leaves 21 cm of
+floor for the opponent's hands. Camera `opponent` shows the human's view from the open end. All scenes (goalkeeper, sling, twin) add the same lightbox at the robot base
+(`workspace.add_lightbox`), and `robot.base_z_m` = -1.97 cm comes from it (mat top + board base).
+
+Notes from the lightbox page: the mat height matters most (here it sets the grasp height); model the
+wrist camera mount and penalize self-contact (a policy there broke the mount on the real arm). The
+C920 records at 30 fps; the twin needs 120 fps or more for the band-to-divider part of a shot.
+
+
 The same Phase 1 task also runs on **MuJoCo physics** with the full SO-101 arm.
 A policy trained on the fast 2D sim runs there without changes, so this is a
 **sim-to-sim transfer test**. It shows which results depend on the simplified
@@ -735,6 +773,51 @@ python -m src.slingpuck.eval.hole_rate --runs logs/sling/sling_v0_s*_* [--shots 
 (about 4 min per seed). The eval runs every policy on the same shots and writes
 `success_summary.csv`, per-shot `shots.csv`, `hole_rate.png` and `eval_meta.yaml`
 to `results/sling/<time>/`. CIs as in Phase 1.
+
+### MuJoCo sling viewer (`physics/mujoco_sling.py`, `eval/view_mujoco_sling.py`)
+
+```bash
+mjpython -m src.slingpuck.eval.view_mujoco_sling --run logs/sling/<run_dir>             # live window (macOS: mjpython)
+python   -m src.slingpuck.eval.view_mujoco_sling --policy center_correct --save sling3d.gif  # GIF, any Python
+```
+
+For each episode, SlingEnv (2D) runs the policy and gives the slide, the pull and
+the corrected pull. MuJoCo then does the shot with the SO-101:
+
+1. The gripper points down, moves to the puck on the band, and closes its jaws on
+   the left and right sides of the puck.
+2. The arm slides the puck along the band, then pulls it back. The band force
+   (BandModel, loading curve) acts on the gripper, so the arm actuators carry the
+   load. The green arrow shows the band force (1 cm per N).
+3. The arm holds the puck while the camera looks, then makes the correction.
+4. Release: the jaws open and the arm lifts. The band (unloading curve) pushes the
+   puck to the band line, then the puck keeps `energy_transfer` of its energy.
+5. MuJoCo flies the puck to the gate, with Coulomb friction and calibrated walls.
+
+The red line is the band (a V around the back of the puck while it is pulled).
+The orange dots are the 2D prediction from the same release point. At the end,
+the viewer shows 3 results: MuJoCo, 2D from the same release point, and the 2D
+env episode (with its release noise).
+
+Options: `--episodes`, `--seed`, `--x0`, `--nominal`, `--camera
+sling|band|shot|gate|side|top` (`band` is a close-up of the grasp), `--arm-rate`
+(arm playback speed, 1 = real time), `--slowmo` (release and flight playback
+speed, default 0.1), `--no-ghost`, `--width`, `--height`.
+
+Notes:
+- The grasp is rigid: while held, the puck position is set from the grasp site
+  (between the jaw tips) every step. The puck follows any arm deflection. In the
+  MuJoCo arm, the deflection under a 5.5 N band load is about 0.3 mm, much less
+  than the 2D `arm.deflection_compliance_m_per_n` placeholder (about 4.5 mm).
+- The puck collides as a sphere of the puck radius at mid-height. The puck cannot
+  move in z, so this is an exact 2D circle against the vertical walls. MuJoCo's
+  cylinder-box contact gives a wrong normal (along x) at the gate corners, so an
+  off-center puck slid through the gate instead of bouncing back.
+- As in SlingEnv, only the first pass to the gate counts. A puck that bounces back
+  and goes through later is a miss.
+- The opponent band is visual only.
+- Check: on the same release points, MuJoCo and 2D agree on the outcome, the miss
+  distance agrees within 0.1 mm, and the exit speed is about 1% lower in MuJoCo.
 
 ### Results (3 seeds, 1000 shots per policy and seed)
 
@@ -960,6 +1043,55 @@ are known, or over a sweep of them.
 
 ---
 
+## Digital twin (real game -> MuJoCo -> sysid)
+
+`src/slingpuck/twin/` copies a recorded game into MuJoCo and writes the sysid
+logs. It closes the real-to-sim half of sim2real2sim: the robot plays with a
+frozen policy, the twin records the game, sysid fits the physics, and the
+policies train again on the fitted simulator.
+
+```bash
+python -m src.slingpuck.twin.calibration <video> --camera-height 0.6 --camera-nadir 0 0   # once per camera setup
+python -m src.slingpuck.twin.replay --session sessions/<name> --save twin.mp4             # camera | MuJoCo twin
+python -m src.slingpuck.sysid.run_sysid --logs sessions/<name>/twin                       # fit the physics
+```
+
+| Step | File | What it does |
+|---|---|---|
+| Calibration | `twin/calibration.py` | Board homography from 4 clicked corners. The camera height and nadir correct the parallax of the puck top face. |
+| Detection | `twin/detector.py` | Warps the frame to a top-down board image, finds dark round blobs of puck size (threshold relative to the board brightness), splits touching pucks. Ignores the pixels of the arm mask. |
+| Arm mask | `twin/scene.py` (`arm_mask`) | Projects the arm meshes (posed from the joint readings) into the image with the calibration only; no lens values needed. |
+| Tracking | `twin/tracker.py` | One Kalman filter per puck, Hungarian assignment, fixed puck count (a puck that reappears far away is a hidden puck, not a new one). |
+| Twin | `twin/scene.py` | MuJoCo board, SO-101 at the measured joints, pucks at the tracked positions (hidden ones faded), bands, predicted paths. |
+| Logs | `twin/logs.py` | `tracks.csv`, and `shots.csv` in the sysid format: rest and flight from the camera, the held position from forward kinematics (the gripper hides the puck). |
+| Restart | `twin/replay.py` (`start_sim_from`) | A 2D sim that starts from a measured moment of the game. |
+| Test data | `twin/synthetic.py`, `twin/evaluate.py` | A synthetic session (MuJoCo shots with hidden true physics, rendered overhead video, robot logs) and the check against its ground truth. |
+
+Session format: `data/real_logs/schema.md`, section 4.
+
+### Results on synthetic sessions (10 shots, true values hidden from the twin)
+
+| | 60 fps | 120 fps |
+|---|---|---|
+| Identity errors (puck-frames) | 0 of 12,425 | 0 of 24,809 |
+| Position error, median / 95% | 1.4 / 1.9 mm | 0.8 / 1.1 mm |
+| Shot-puck frames seen | 43% (held or under the arm the rest of the time) | 43% |
+| Friction (truth 0.25) | 0.249 ± 0.004 | 0.248 ± 0.002 |
+| Wall restitution (truth 0.80) | no fit (too few exit frames) | 0.82 ± 0.05 |
+| Band energy transfer (truth 0.62) | no fit | 0.595 ± 0.012 |
+
+Starting the 2D sim from a measured moment of a straight shot, the median
+position error 0.3 s later is 30 mm with the v0 physics and 9-11 mm with the
+fitted physics. Near a bounce the constant-velocity filter mixes the speeds before
+and after the bounce, so a restart within about 50 ms after a bounce is not
+reliable (errors of 30-90 mm on the divider shots).
+
+Found on the way: sysid joined frames from before and after a hidden end-wall
+bounce into one free slide (friction 0.33 instead of 0.25). Free-slide segments
+now stop at a gap in the frames (`sysid/fit.py`, `_until_gap`).
+
+---
+
 ## Tests
 
 ```bash
@@ -979,6 +1111,9 @@ pytest -q
 | `test_stats.py` | Wilson and t intervals against known values |
 | `test_mujoco_goalkeeper.py` | Paddle on the 2D arc, pan sign, Coulomb friction, calibrated wall and paddle restitution, gate crossing and divider, `check_env` and identical spaces, center saves a slow shot, randomization updates the model |
 | `test_band.py` | **Hysteresis loop closes** and loses the set fraction (3 exponents × 3 losses), monotonic tension, pre-tension, force direction, release energy balance, energy transfer, almost-straight launch, deflection, tiny pull does not launch |
+| `test_workspace.py` | Board fits between the side walls in front of the robot, far end open for the opponent, turning axis matches the config, play surface on the mat, flicked puck slows with Coulomb friction, C920 aims at the mat |
+| `test_twin.py` | Calibration round trip, detection within 1.5 mm on a rendered frame, touching pucks split, arm mask removes the gripper, tracker identities through hiding, crossing and a false detection, a hidden puck that reappears far away, sysid segments stop at a gap, synthetic session end to end |
+| `test_mujoco_sling.py` | Grasp opening, IK reaches the band and pull positions with the gripper down, **radial normal at the gate corner**, held puck follows the grasp, MuJoCo shot matches the 2D model (exit speed, outcome, miss) |
 | `test_sling_env.py` | `check_env` (Box and Dict), 2 steps with correction and 1 without, seeded repeat, noiseless center hit and off-center miss, reward, band depth seen after the pull, scripted baselines |
 | `test_match.py` | Opponent: tell 1 shows the launch x exactly, tell 0 hides it, threats aim inside the gate, phases in order, smooth hand; match: `check_env`, **pucks conserved**, rewards add up, a settled blocker saves every threat, greedy concedes every threat while away, sling timing, seeded repeat, hand ablation, puck hidden before the camera latency, reload detection, block-table interpolation |
 | `test_sysid.py` | Schema checks, synthetic recovery of band, servo and shot parameters, closed loop in the bench log, versioned params file, synthetic fits never go to `configs/`, transit-time interpolation |
@@ -1067,10 +1202,9 @@ its config file. Strict mode does not run until you replace them.
 
 | Value | Config path | Why it matters |
 |---|---|---|
-| Gate width | `board.gate_width_m` | Sets the Phase 2 target size and the Phase 1 threat zone |
 | Divider thickness | `board.divider_thickness_m` | Paddle position and gate geometry |
 | Puck mass (one puck alone) | `puck.mass_kg` | Phase 2 launch speed |
-| Puck diameter and thickness on size M | `puck.radius_m`, `puck.thickness_m` | All contacts |
+| Puck diameter in mm (now 1 in) and thickness | `puck.radius_m`, `puck.thickness_m` | All contacts |
 | Band peg spacing, band distance from the end wall, maximum pull | `band.anchor_span_m`, `band.band_offset_from_end_wall_m`, `band.max_pull_m` | Band geometry, shot range |
 | **Natural (unstretched) band length** (ruler) | `band.natural_length_m` (`--natural-length`) | Pre-tension; needed by the band bench fit |
 | Band bench test, servo step test, shot log | see `data/real_logs/schema.md` | Fit the band, servo, compliance, friction, restitution, energy transfer |

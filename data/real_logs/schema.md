@@ -82,3 +82,38 @@ bounces), `band.energy_transfer` (exit speeds vs the band model).
 
 The same file is the input to the sim-vs-real parity check:
 `python -m src.slingpuck.eval.hole_rate --parity <shots.csv> --versions v0 v1`.
+
+---
+
+## 4. Digital twin session (input of `src/slingpuck/twin/replay.py`)
+
+One folder per session. The twin turns it into `twin/shots.csv` (section 3) and
+`twin/tracks.csv`, so sysid can run on real games:
+`python -m src.slingpuck.twin.replay --session <folder>`, then
+`python -m src.slingpuck.sysid.run_sysid --logs <folder>/twin`.
+
+| File | What it holds |
+|---|---|
+| `camera.mp4` | Overhead camera video. 120 fps or more: at 60 fps the camera sees only 2-3 frames between the band and the divider, too few to fit the wall restitution and the band energy transfer. |
+| `calibration.yaml` | From `python -m src.slingpuck.twin.calibration <video> --camera-height H --camera-nadir X Y`: the 4 clicked inner corners, the lens height above the board and the board point below the lens (tape measure). |
+| `joints.csv` | Joint readings, columns `t_s, shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper` (rad). `t_s` on the same clock as the video frames (frame k at k / fps). |
+| `robot_shots.csv` | One row per sling shot (below). |
+
+`robot_shots.csv`:
+
+| Column | Description |
+|---|---|
+| `shot_id` | Shot number |
+| `t_rest_s` | The arm is at home and the puck rests free on the band (the camera sees it) |
+| `t_approach_s` | The arm starts to move to the puck |
+| `t_grasp_s` | The jaws are closed on the puck |
+| `t_release_s` | Release command |
+| `cmd_slide_m`, `cmd_angle_rad`, `cmd_pull_m` | Commands, as in section 3 |
+
+The gripper hides the held puck from the overhead camera, so the twin takes the
+`pulled` position from forward kinematics of the joint readings (the point
+between the jaw tips), 0.3 s before the release.
+
+`python -m src.slingpuck.twin.synthetic --out sessions/<name> [--fps 120]` writes a
+**synthetic** session in this format (MuJoCo shots with hidden true physics values,
+in `truth/`). Use it to test the pipeline; do not report results from it as real data.

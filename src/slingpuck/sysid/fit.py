@@ -185,6 +185,21 @@ class _Segment:
 
 
 MIN_FRAMES = 4
+MAX_GAP_FRAMES = 2.5  # A segment ends at a gap longer than this many frame periods (puck hidden)
+
+
+def _until_gap(idx, t):
+    """The first run of idx with no time gap: while the puck is hidden (under the arm or a hand)
+    it can bounce or be touched, so a free-slide segment must not bridge a gap."""
+    if len(idx) < 2:
+        return list(idx)
+    period = float(np.median(np.diff(t)))
+    out = [idx[0]]
+    for a, b in zip(idx, idx[1:]):
+        if t[b] - t[a] > MAX_GAP_FRAMES * period:
+            break
+        out.append(b)
+    return out
 
 
 def _raw_segments(i, shot, band_y, face_y, half_length, radius):
@@ -223,7 +238,8 @@ def _raw_segments(i, shot, band_y, face_y, half_length, radius):
             idx3 = [k for k in back if k <= k_end and -half_length + radius + 0.01 < y[k] < face_y - 0.004]
             if len(idx3) >= MIN_FRAMES:
                 segs.append(("return", idx3))
-    return [_Segment(i, kind, t[k], x[k], y[k], float(t[k][0])) for kind, k in segs]
+    segs = [(kind, _until_gap(k, t)) for kind, k in segs]
+    return [_Segment(i, kind, t[k], x[k], y[k], float(t[k][0])) for kind, k in segs if len(k) >= MIN_FRAMES]
 
 
 def _seg_params_guess(seg):
