@@ -11,7 +11,7 @@ folder has exactly what a real session will have, plus the ground truth:
   robot_shots.csv   commands and event times of each shot
   truth/            true puck positions per frame, truth.yaml (true physics values)
 
-Scene: 5 pucks. One puck is shot again and again: between shots a hand picks
+Scene: 5 pucks (black = robot's, white = human's). One black puck is shot again and again: between shots a hand picks
 it up (it is out of view for gap_s) and puts it back on the band at a new x.
 Four pucks stay still away from the shot lanes. Some shots aim 3-5 cm off
 center so they bounce back from the divider (sysid needs those for the wall
@@ -38,7 +38,7 @@ from src.slingpuck.twin.logs import ROBOT_SHOT_COLUMNS
 from src.slingpuck.twin.scene import JOINTS, TwinScene, project
 
 TRUTH = {"puck.friction_kinetic": 0.25, "band.energy_transfer": 0.62, "board.restitution": 0.80}
-STATIC_PUCKS = [(-0.07, 0.10), (0.07, 0.13), (-0.075, -0.035), (0.065, 0.06)]
+STATIC_PUCKS = [(-0.07, 0.10, "white"), (0.07, 0.13, "white"), (-0.075, -0.035, "black"), (0.065, 0.06, "white")]
 ENCODER_RAD = 2 * np.pi / 4096
 
 
@@ -69,7 +69,8 @@ def generate(out_dir, base_version: str = "v0", truth: dict | None = None, seed:
     scene = TwinScene(cfg, n_pucks, overhead_height_m=camera_height_m)
     renderer = mujoco.Renderer(scene.model, height, width)
     writer = cv2.VideoWriter(str(out / "camera.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    statics = [SimpleNamespace(id=k + 1, pos=np.array(p), hidden=False) for k, p in enumerate(STATIC_PUCKS)]
+    statics = [SimpleNamespace(id=k + 1, pos=np.array(p[:2]), hidden=False, colour=p[2])
+               for k, p in enumerate(STATIC_PUCKS)]
     frames_truth, joint_rows, shot_rows = [], [], []
     clock = {"t": 0.0, "k": 0}
 
@@ -78,7 +79,7 @@ def generate(out_dir, base_version: str = "v0", truth: dict | None = None, seed:
         t = clock["k"] / fps
         pucks = list(statics)
         if shot_xy is not None:
-            pucks.append(SimpleNamespace(id=0, pos=np.asarray(shot_xy), hidden=False))
+            pucks.append(SimpleNamespace(id=0, pos=np.asarray(shot_xy), hidden=False, colour="black"))
         scene.set_arm(q)
         scene.set_pucks(pucks)
         renderer.update_scene(scene.data, camera="overhead")
@@ -86,7 +87,7 @@ def generate(out_dir, base_version: str = "v0", truth: dict | None = None, seed:
         img = np.clip(img + rng.normal(0.0, 2.0, img.shape), 0, 255).astype(np.uint8)
         writer.write(img)
         for p in pucks:
-            frames_truth.append((t, p.id, *p.pos))
+            frames_truth.append((t, p.id, p.colour, *p.pos))
         q_meas = np.round((np.asarray(q) + rng.normal(0.0, 0.3 * ENCODER_RAD, len(q))) / ENCODER_RAD) * ENCODER_RAD
         joint_rows.append((t, *q_meas))
         clock["k"] += 1
@@ -117,7 +118,7 @@ def generate(out_dir, base_version: str = "v0", truth: dict | None = None, seed:
 
     pd.DataFrame(joint_rows, columns=["t_s", *JOINTS]).to_csv(out / "joints.csv", index=False)
     pd.DataFrame(shot_rows, columns=ROBOT_SHOT_COLUMNS).to_csv(out / "robot_shots.csv", index=False)
-    pd.DataFrame(frames_truth, columns=["t_s", "puck", "x_m", "y_m"]).to_csv(out / "truth" / "pucks.csv", index=False)
+    pd.DataFrame(frames_truth, columns=["t_s", "puck", "colour", "x_m", "y_m"]).to_csv(out / "truth" / "pucks.csv", index=False)
 
     # Calibration as a person would make it: clicked corners, taped camera height and nadir.
     scene.set_arm(arm_q(sim))

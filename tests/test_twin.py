@@ -122,3 +122,28 @@ def test_synthetic_session_end_to_end(tmp_path):
         assert m["success"] == (abs(s.cmd_slide_m) < 0.01)  # Straight shot goes through, divider shot does not
     df = pd.read_csv(session / "twin" / "shots.csv")
     assert set(df.phase) == {"rest", "pulled", "flight"}
+
+
+def test_detector_tells_black_from_white(rig):
+    rig.scene.set_arm(np.r_[rig.sim.solve_ik(HOME_XYZ), rig.sim.grasp.q_open])  # Arm away from the board
+    truth = [(0.03, rig.sim.band.band_y, "black"), (-0.06, -0.04, "black"), (0.06, 0.05, "white"),
+             (-0.06, 0.12, "white"), (0.0, 0.0, "white"), (0.07, -0.09, "white")]
+    rig.scene.set_pucks([SimpleNamespace(id=i, pos=np.array(p[:2]), hidden=False, colour=p[2])
+                         for i, p in enumerate(truth)])
+    dets = rig.detector.detect(render(rig))
+    assert len(dets) == len(truth)
+    for x, y, colour in truth:
+        d = min(dets, key=lambda d: np.linalg.norm(d.xy - [x, y]))
+        assert d.colour == colour and np.linalg.norm(d.xy - [x, y]) < 2e-3
+
+
+def test_tracker_never_swaps_colours(cfg):
+    trk = MultiPuckTracker(cfg, n_pucks=2)
+    for k in range(60):
+        t = k / 60
+        black = np.array([-0.05 + 0.1 * t, 0.0])
+        white = np.array([0.05 - 0.1 * t, 0.0])   # Same line: the two pucks meet head-on at t = 0.5 s
+        states = trk.update(t, [black, white], ["black", "white"])
+        if k > 5:
+            by_colour = {s.colour: s for s in states}
+            assert np.linalg.norm(by_colour["black"].pos - black) < 0.01

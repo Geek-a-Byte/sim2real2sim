@@ -1,21 +1,19 @@
-"""SO-101 arm with the sling puck board in the lightbox workspace, in MuJoCo: the scene of this project.
+"""SO-101 arm with the sling puck board on a table, in MuJoCo: the scene of this project.
 
     python -m src.slingpuck.so101_slingpuck               # opens the interactive viewer
     python -m src.slingpuck.so101_slingpuck --save        # also writes assets/mujoco/robotstudio_so101/so101_slingpuck.xml
     python -m src.slingpuck.so101_slingpuck --no-viewer   # build and check the scene only (e.g. on a headless machine)
 
-Same structure as so101_lightbox.py (the course's lightbox script), for the sling puck use case. The SO-101
-model is the RobotStudio MJCF already in assets/ (no download).
+Same structure as so101_lightbox.py (the course's lightbox script), for the sling puck use case, without the
+lightbox. The SO-101 model is the RobotStudio MJCF already in assets/ (no download).
 
-Frame: origin at the robot base, on the floor it stands on. x forward (away from the robot), y the robot's
-left, z up. Meters. The lightbox, mat and C920 are the measured values in src/slingpuck/workspace.py. For the
-game the lightbox has no back wall: the human opponent sits at the open far end, face to face with the robot,
-and the longer side walls keep the game between them.
+Frame: origin at the robot base, on the table it stands on. x forward (away from the robot), y the robot's
+left, z up. Meters. The human opponent sits at the far end, face to face with the robot (camera "opponent").
 
-The board lies on the mat, lengthwise along x, centered left to right, with the robot behind the agent end
+The board lies on the same table, lengthwise along x, centered left to right, with the robot behind the agent end
 wall. Its sizes, the bands and the pucks come from configs/physics_params_v<N>.yaml, so this scene always
 matches the simulators. The rest of the project uses the BOARD frame (origin at the board center, y toward
-the opponent, agent half y < 0); board_to_robot() converts. In the viewer, drag a puck with Ctrl + right
+the opponent, agent half y < 0); board_to_robot() converts. The robot's 5 pucks are black, the human's 5 white. In the viewer, drag a puck with Ctrl + right
 mouse to flick it: the pucks slide with Coulomb friction and bounce off the walls, the divider and each other.
 """
 import argparse
@@ -27,17 +25,27 @@ import numpy as np
 
 from src.slingpuck.config import load_config
 from src.slingpuck.physics.band_model import BandModel
-from src.slingpuck.physics.mujoco_goalkeeper import SO101_XML, WALL_PAIRS, add_board
+from src.slingpuck.physics.mujoco_goalkeeper import (
+    CONTACT_SOLIMP, SO101_XML, WALL_PAIRS, _pan_anchor_local, add_board, add_table_and_light, board_floor_thickness)
 from src.slingpuck.physics.mujoco_sling import add_band_pegs
-from src.slingpuck.workspace import BASE_AXIS_X, FAR_X, add_lightbox, play_surface_z
 
 GRAVITY = 9.81
+BASE_AXIS_X = float(_pan_anchor_local()[0])   # the arm's turning axis is 3.88 cm in front of the base origin
 PUCKS_PER_SIDE = 5
 RACK_Y = 0.07                              # Board y of the puck rows on each half (|y|, m), clear of the band
 RACK_PITCH = 0.03                          # Puck spacing in a row, m (puck diameter 2.54 cm)
 HOME = [1.319, -0.862, 0.582, 1.658, -0.301, 0.268]  # start pose (rad): gripper over the agent-right corner, jaws open
 BAND_RGBA = [0.80, 0.12, 0.10, 1]
-PUCK_RGBA = [0.08, 0.08, 0.08, 1]
+PUCK_RGBA = {"a": [0.06, 0.06, 0.06, 1],    # Robot (agent) pucks: black
+             "o": [0.96, 0.96, 0.94, 1]}    # Human (opponent) pucks: white
+
+
+def contact_params(cfg: dict):
+    """solref (-stiffness, -damping) and solimp of the puck contacts."""
+    e = cfg["board"]["restitution"]
+    zeta = -math.log(e) / math.sqrt(math.pi ** 2 + math.log(e) ** 2)
+    k = (math.pi / cfg["sim"]["mujoco_contact_time_s"]) ** 2
+    return [-k, -2.0 * zeta * math.sqrt(k)], list(CONTACT_SOLIMP)
 
 
 def board_pose(cfg: dict):
@@ -47,7 +55,7 @@ def board_pose(cfg: dict):
     base origin. The board's +y (toward the opponent) is the robot's +x.
     """
     axis_x_b, axis_y_b = cfg["robot"]["base_xy_m"]
-    pos = np.array([BASE_AXIS_X - axis_y_b, axis_x_b, play_surface_z(cfg)])
+    pos = np.array([BASE_AXIS_X - axis_y_b, axis_x_b, board_floor_thickness(cfg)])   # Board on the robot's table
     return pos, -math.pi / 2
 
 
@@ -60,8 +68,9 @@ def board_to_robot(cfg: dict, xy_board, z_board: float = 0.0) -> np.ndarray:
 def build(cfg: dict):
     spec = mujoco.MjSpec.from_file(str(SO101_XML))
     spec.option.timestep = cfg["sim"]["mujoco_timestep_s"]
+    spec.visual.global_.offwidth, spec.visual.global_.offheight = 1280, 960   # GIF frames up to 1280 x 960
     w = spec.worldbody
-    add_lightbox(w)
+    add_table_and_light(w, 0.0)
 
     pos, yaw = board_pose(cfg)
     board = w.add_body(name="board", pos=pos.tolist(), quat=[math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)])
@@ -90,18 +99,24 @@ def build(cfg: dict):
                 b.add_joint(name=f"{name}_{jn}", type=getattr(mujoco.mjtJoint, f"mjJNT_{jt}"), axis=list(axis),
                             frictionloss=friction if jt == "SLIDE" else 1e-5, damping=0.0)
             b.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[r, z_mid, 0], mass=puck["mass_kg"],
-                       rgba=PUCK_RGBA, contype=0, conaffinity=0)
+                       rgba=PUCK_RGBA[side], contype=0, conaffinity=0)
             b.add_geom(name=f"{name}_col", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0], density=0.0,
                        rgba=[0, 0, 0, 0], group=3, contype=0, conaffinity=0)
-    # Bounces: frictionless contacts; damping ratio set so a head-on bounce keeps about the configured restitution.
-    e = cfg["board"]["restitution"]
-    zeta = -math.log(e) / math.sqrt(math.pi ** 2 + math.log(e) ** 2)
-    solref = [cfg["sim"]["mujoco_contact_time_s"], zeta]
+    # Bounces: frictionless contacts as a direct spring-damper (as mujoco_goalkeeper; the (timeconst,
+    # dampratio) form with a low damping ratio gained energy on every bounce). Damping ratio from the
+    # configured restitution: a head-on bounce keeps about that fraction of the normal speed.
+    solref, solimp = contact_params(cfg)
     for k, a in enumerate(names):
         for wall in WALL_PAIRS:
-            spec.add_pair(geomname1=f"{a}_col", geomname2=wall, condim=1, solref=solref)
+            spec.add_pair(geomname1=f"{a}_col", geomname2=wall, condim=1, solref=solref, solimp=solimp)
         for b in names[k + 1:]:
-            spec.add_pair(geomname1=f"{a}_col", geomname2=f"{b}_col", condim=1, solref=solref)
+            spec.add_pair(geomname1=f"{a}_col", geomname2=f"{b}_col", condim=1, solref=solref, solimp=solimp)
+
+    # The human's view: seated at the far end, eyes about 40 cm above the board, facing the robot.
+    far_end = board_to_robot(cfg, (0.0, 0.5 * cfg["board"]["outer_length_m"]))
+    w.add_body(name="board_center", pos=(pos + [0.0, 0.0, 0.0]).tolist())
+    w.add_camera(name="opponent", pos=(far_end + [0.20, 0.0, 0.42]).tolist(), fovy=55,
+                 mode=mujoco.mjtCamLight.mjCAMLIGHT_TARGETBODY, targetbody="board_center")
 
     n_puck_q = 3 * len(names)
     spec.add_key(name="home", qpos=HOME + [0.0] * n_puck_q, ctrl=HOME)
@@ -122,16 +137,14 @@ def main():
     mujoco.mj_resetDataKeyframe(model, data, 0)        # arm in the HOME pose
     mujoco.mj_forward(model, data)
     tip = data.site("gripperframe").xpos
-    surface = play_surface_z(cfg)
+    surface = board_floor_thickness(cfg)
     near = board_to_robot(cfg, (0.0, -0.5 * cfg["board"]["outer_length_m"]))[0]
     far = board_to_robot(cfg, (0.0, 0.5 * cfg["board"]["outer_length_m"]))[0]
     print(f"Scene ready: {model.nbody} bodies, {model.nu} actuators, {2 * PUCKS_PER_SIDE} pucks. "
           f"Gripper tip at HOME: {100 * tip[0]:.1f} cm forward, {100 * (tip[2] - surface):.1f} cm above the board.")
-    print(f"Board: play surface {100 * surface:.2f} cm above the robot's floor; near end {100 * (near - BASE_AXIS_X):.1f} cm "
-          f"in front of the turning axis; far end {100 * (FAR_X - far):.1f} cm before the open end (opponent side); "
+    print(f"Board: play surface {100 * surface:.2f} cm above the table; near end {100 * (near - BASE_AXIS_X):.1f} cm "
+          f"in front of the turning axis; far end {100 * far:.1f} cm in front of the robot base; "
           f"gate {100 * cfg['board']['gate_width_m']:.1f} cm.")
-    if far > FAR_X:
-        print("WARNING: the board runs past the side walls; check robot.base_xy_m or workspace.FAR_X.")
     if a.save:
         path = SO101_XML.parent / "so101_slingpuck.xml"   # next to so101.xml so the mesh paths resolve
         path.write_text(spec.to_xml())

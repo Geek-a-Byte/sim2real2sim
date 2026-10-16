@@ -1,10 +1,11 @@
-"""Puck detector for the overhead camera: dark round blobs of puck size on the light board.
+"""Puck detector for the overhead camera: black and white round blobs of puck size on the wood board.
 
 1. Warp the frame to a top-down image of the play area (px_per_m pixels per m),
    with the calibration homography of the board plane.
-2. Threshold dark pixels: Otsu's limit on the play-area image, never above
-   dark_frac x its median brightness (so the limit follows the exposure, and a
-   board with no pucks gives no blobs). Clean with a small opening.
+2. Compare each pixel with the local board background (a wide median blur), so
+   uneven light cancels out. Black pucks: darker than the background. White
+   pucks: less colour-saturated than the background (wood has some saturation, a
+   white puck almost none) and not darker. Clean both masks with a small opening.
 3. Each blob of about one puck area and round enough is one puck. A blob of
    two or more puck areas (touching pucks) is split by k-means on its pixels,
    k = blob area / one puck area.
@@ -29,13 +30,16 @@ from src.slingpuck.twin.calibration import BoardCalibration
 class Detection:
     xy: np.ndarray       # Board frame, m
     score: float         # Roundness in [0, 1] (1 = perfect disk); 0.5 for split blobs
+    colour: str = "black"
 
 
 class PuckDetector:
-    def __init__(self, cfg: dict, calib: BoardCalibration, px_per_m: float = 2000.0, dark_frac: float = 0.8,
-                 min_roundness: float = 0.7):
+    def __init__(self, cfg: dict, calib: BoardCalibration, px_per_m: float = 2000.0, dark_ratio: float = 0.55,
+                 sat_delta: int = 12, white_dark_margin: int = 25, min_roundness: float = 0.7):
+        """Limits are against the local board background (grey levels 0-255); tune them on real video."""
         self.cfg, self.calib, self.s = cfg, calib, px_per_m
-        self.dark_frac, self.min_roundness = dark_frac, min_roundness
+        self.dark_ratio, self.sat_delta, self.white_dark_margin = dark_ratio, sat_delta, white_dark_margin
+        self.min_roundness = min_roundness
         self.hw, self.hl = 0.5 * cfg["board"]["width_m"], 0.5 * cfg["board"]["length_m"]
         self.r_px = cfg["puck"]["radius_m"] * px_per_m
         self.half_height = 0.5 * cfg["puck"]["thickness_m"]
@@ -57,18 +61,41 @@ class PuckDetector:
             xy = self.calib.camera_nadir_xy + (xy - self.calib.camera_nadir_xy) * k
         return xy
 
+    def masks(self, frame: np.ndarray, ignore_mask: np.ndarray | None = None) -> dict:
+        """Top-down candidate masks, each against the local board background (a median blur about 4 puck
+        radii wide), so smooth changes of the light cancel out:
+          "black": darker than dark_ratio x the background (a puck shadow is about 0.7 x, a black puck
+                   under 0.45 x; a shadow in the mask moves the blob centre away from the light)
+          "white": greyer than the background by sat_delta (wood has some colour saturation, a white
+                   puck almost none) AND not darker than it by white_dark_margin (keeps out black pucks
+                   and shadows). Brightness alone fails: in the lit area board and puck both saturate."""
+        top = self.top_down(frame)
+        if top.ndim == 2:
+            top = cv2.cvtColor(top, cv2.COLOR_GRAY2BGR)
+        hsv = cv2.cvtColor(top, cv2.COLOR_BGR2HSV)
+        sat, val = hsv[:, :, 1], hsv[:, :, 2]
+        gray = cv2.cvtColor(top, cv2.COLOR_BGR2GRAY)
+        k_bg = int(4 * self.r_px) | 1
+        bg_gray, bg_sat, bg_val = (cv2.medianBlur(c, k_bg).astype(np.int16) for c in (gray, sat, val))
+        out = {"black": (gray.astype(np.int16) < self.dark_ratio * bg_gray).astype(np.uint8),
+               "white": ((val.astype(np.int16) > bg_val - self.white_dark_margin)
+                         & (bg_sat - sat.astype(np.int16) > self.sat_delta)).astype(np.uint8)}
+        ign = None if ignore_mask is None else \
+            cv2.warpPerspective(ignore_mask.astype(np.uint8), self.M, self.size, flags=cv2.INTER_NEAREST)
+        k = max(3, int(round(0.15 * self.r_px)) | 1)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        for c, mask in out.items():
+            if ign is not None:
+                mask[ign > 0] = 0
+            out[c] = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        self.last_mask = out["black"] | out["white"]
+        return out
+
     def detect(self, frame: np.ndarray, ignore_mask: np.ndarray | None = None) -> list[Detection]:
         """ignore_mask: image-size bool array of pixels to ignore (the arm)."""
-        top = self.top_down(frame)
-        gray = cv2.cvtColor(top, cv2.COLOR_BGR2GRAY) if top.ndim == 3 else top
-        otsu, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        mask = (gray < min(otsu, self.dark_frac * float(np.median(gray)))).astype(np.uint8)
-        if ignore_mask is not None:
-            ign = cv2.warpPerspective(ignore_mask.astype(np.uint8), self.M, self.size, flags=cv2.INTER_NEAREST)
-            mask[ign > 0] = 0
-        k = max(3, int(round(0.15 * self.r_px)) | 1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-        self.last_mask = mask
+        return [d for colour, mask in self.masks(frame, ignore_mask).items() for d in self._blobs(mask, colour)]
+
+    def _blobs(self, mask: np.ndarray, colour: str) -> list[Detection]:
         area1 = np.pi * self.r_px ** 2
         out = []
         n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
@@ -82,8 +109,10 @@ class PuckDetector:
             roundness = float(min(1.0, 4 * np.pi * area / max(perim, 1e-9) ** 2))
             if area <= 1.7 * area1:
                 if roundness >= self.min_roundness:
-                    out.append(Detection(self._to_board(cents[i])[0], roundness))
+                    out.append(Detection(self._to_board(cents[i])[0], roundness, colour))
                 continue
+            if area > 6.5 * area1:
+                continue  # Not pucks (a lit patch of board, a hand)
             # Touching pucks: k-means on the blob pixels, k = blob area / one puck area.
             k = int(round(area / area1))
             vv, uu = np.nonzero(blob)
@@ -91,6 +120,5 @@ class PuckDetector:
             crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.1)
             _, _, centers = cv2.kmeans(pts, k, None, crit, 5, cv2.KMEANS_PP_CENTERS)
             for uv in centers:
-                out.append(Detection(self._to_board(uv)[0], 0.5))
+                out.append(Detection(self._to_board(uv)[0], 0.5, colour))
         return out
-

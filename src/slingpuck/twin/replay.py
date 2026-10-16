@@ -65,7 +65,7 @@ class Twin:
         if q is not None and self.calib.camera_height_m:
             mask = self.scene.arm_mask(self.calib, frame.shape[0], frame.shape[1])
         self.last_detections = self.detector.detect(frame, mask)
-        states = self.tracker.update(t, [d.xy for d in self.last_detections])
+        states = self.tracker.update(t, [d.xy for d in self.last_detections], [d.colour for d in self.last_detections])
         self.scene.set_pucks(states)
         self.scene.predict()
         return states

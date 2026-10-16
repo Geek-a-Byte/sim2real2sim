@@ -131,7 +131,6 @@ def add_view_cameras(spec: mujoco.MjSpec):
     """sling: band, puck and gate together. band: close-up of the grasp and the band V.
     shot: from behind the opponent band, looking back at the gate."""
     world = spec.worldbody
-    # All inside the lightbox (its back wall is 3 cm behind the board's far end).
     for name, lookat, az, el, dist, fovy in (("sling", (0.0, -0.05, 0.02), -120, -40, 0.36, 60),
                                              ("band", (0.0, -0.12, 0.01), -130, -22, 0.22, 45)):
         pos = _orbit(lookat, az, el, dist)

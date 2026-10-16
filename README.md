@@ -132,6 +132,12 @@ python -m src.slingpuck.eval.hole_rate --runs logs/sling/sling_v0_s*_*
 # MuJoCo: the SO-101 grasps the puck, pulls it back against the band and shoots it
 mjpython -m src.slingpuck.eval.view_mujoco_sling --run logs/sling/<run_dir>         # live 3D window
 python   -m src.slingpuck.eval.view_mujoco_sling --policy center_correct --save sling3d.gif
+# MuJoCo match: the SO-101 (black pucks) against a scripted human (white pucks), face to face
+mjpython -m src.slingpuck.eval.view_mujoco_match                                     # live 3D window
+mjpython -m src.slingpuck.eval.view_mujoco_match --camera opponent                   # the human's view
+mjpython -m src.slingpuck.eval.view_mujoco_match --games 0 --speed 0.5               # until the window closes, half speed
+python   -m src.slingpuck.eval.view_mujoco_match --save match.gif --max-time 20       # GIF
+python   -m src.slingpuck.eval.view_mujoco_match --camera opponent --save match_opp.gif --max-time 20
 
 # Sysid: fit physics from logs, write a new params version, check sim vs real
 python -m src.slingpuck.sysid.synthetic --out data/real_logs/synthetic          # synthetic logs to try it
@@ -169,6 +175,7 @@ src/slingpuck/
     puck_dynamics.py       Fast2DPuckSim: friction, walls, divider + gate, puck-puck, kinematic paddle
     servo_model.py         Latency -> deadband -> first-order lag -> rate limit
     mujoco_goalkeeper.py   MuJoCo scene from config, arm pose (IK), contact calibration, MuJoCo backend
+    mujoco_match.py        MuJoCo match: SO-101 (black pucks) against a scripted human (white pucks), all pucks in the physics
     band_model.py          Pre-stretched band: V geometry, nonlinear tension, closed hysteresis loop, release
     arm_deflection.py      Actual pull = command - compliance x band force (bisection)
   sensing/
@@ -201,8 +208,8 @@ src/slingpuck/
     visualize_goalkeeper.py  Top-down slow-motion viewer (window or GIF)
     view_mujoco.py         3D MuJoCo viewer (mjpython window or GIF)
     view_mujoco_sling.py   Phase 2 3D MuJoCo viewer: grasp, slide, pull against the band, release, flight
-  workspace.py             Lightbox, mat and C920 (measured), shared by all MuJoCo scenes
-  so101_slingpuck.py       The full scene in the lightbox: viewer, --save, --no-viewer
+    view_mujoco_match.py   3D MuJoCo match viewer: robot against the opponent (cameras: overview, opponent)
+  so101_slingpuck.py       The full scene (table, board, robot, 10 pucks): viewer, --save, --no-viewer
   twin/
     calibration.py         Board homography from clicked corners, parallax correction
     detector.py            Puck detection in the overhead image
@@ -563,7 +570,7 @@ transfer to a different servo model.
 
 ## MuJoCo simulation
 
-### The workspace: lightbox, mat, board (`so101_slingpuck.py`, `workspace.py`)
+### The full scene (`so101_slingpuck.py`)
 
 ```bash
 python -m src.slingpuck.so101_slingpuck               # interactive viewer (Ctrl + right drag flicks a puck)
@@ -571,20 +578,12 @@ python -m src.slingpuck.so101_slingpuck --no-viewer   # build and check only
 python -m src.slingpuck.so101_slingpuck --save        # write assets/mujoco/robotstudio_so101/so101_slingpuck.xml
 ```
 
-Same structure as the course's `so101_lightbox.py`, and its measured lightbox: white foam box
-(76.2 cm wide, 50.8 cm high), black mat 7.9 cm in front of the turning axis, and the C920 on the left
-wall (camera `c920`). Frame: origin at the robot base, x forward, y left, z up. For the game, a human
-plays face to face with the robot: the back wall is removed, and the floor and side walls run on to
-`workspace.FAR_X` = 65 cm (TODO: measure), so the game stays between the side walls. The board lies on
-the mat, lengthwise, centered, with the robot behind the agent end wall; with the current
-`robot.base_xy_m` its near end is 3.5 cm in front of the turning axis, and its far end leaves 21 cm of
-floor for the opponent's hands. Camera `opponent` shows the human's view from the open end. All scenes (goalkeeper, sling, twin) add the same lightbox at the robot base
-(`workspace.add_lightbox`), and `robot.base_z_m` = -1.97 cm comes from it (mat top + board base).
-
-Notes from the lightbox page: the mat height matters most (here it sets the grasp height); model the
-wrist camera mount and penalize self-contact (a policy there broke the mount on the real arm). The
-C920 records at 30 fps; the twin needs 120 fps or more for the band-to-divider part of a shot.
-
+Same structure as the course's `so101_lightbox.py`, without the lightbox. Frame: origin at the robot
+base, x forward, y left, z up. The robot and the board stand on the same table; the board lies
+lengthwise, centered, with the robot behind the agent end wall (near end 3.5 cm in front of the turning
+axis with the current `robot.base_xy_m`). The human sits at the far end, face to face with the robot
+(camera `opponent`). 5 black pucks are the robot's, 5 white the human's. One light from straight above
+(all scenes): its shadows fall under the pucks, so they do not shift the twin's puck positions.
 
 The same Phase 1 task also runs on **MuJoCo physics** with the full SO-101 arm.
 A policy trained on the fast 2D sim runs there without changes, so this is a
@@ -1071,20 +1070,27 @@ Session format: `data/real_logs/schema.md`, section 4.
 
 ### Results on synthetic sessions (10 shots, true values hidden from the twin)
 
+Black and white pucks (the robot's and the human's), one light from straight above.
+
 | | 60 fps | 120 fps |
 |---|---|---|
-| Identity errors (puck-frames) | 0 of 12,425 | 0 of 24,809 |
-| Position error, median / 95% | 1.4 / 1.9 mm | 0.8 / 1.1 mm |
-| Shot-puck frames seen | 43% (held or under the arm the rest of the time) | 43% |
-| Friction (truth 0.25) | 0.249 ± 0.004 | 0.248 ± 0.002 |
-| Wall restitution (truth 0.80) | no fit (too few exit frames) | 0.82 ± 0.05 |
-| Band energy transfer (truth 0.62) | no fit | 0.595 ± 0.012 |
+| Identity errors (puck-frames) | 0 of 12,468 | 0 of 24,918 |
+| Position error, median / 95% | 1.3 / 2.0 mm | 0.8 / 1.9 mm |
+| Shot-puck frames seen | 45% (held or under the arm the rest of the time) | 46% |
+| Friction (truth 0.25) | 0.253 ± 0.003 | 0.248 ± 0.002 |
+| Wall restitution (truth 0.80) | 0.82 ± 0.03 | 0.82 ± 0.01 |
+| Band energy transfer (truth 0.62) | 0.66 ± 0.01 (7% high) | 0.619 ± 0.005 |
 
-Starting the 2D sim from a measured moment of a straight shot, the median
-position error 0.3 s later is 30 mm with the v0 physics and 9-11 mm with the
-fitted physics. Near a bounce the constant-velocity filter mixes the speeds before
-and after the bounce, so a restart within about 50 ms after a bounce is not
-reliable (errors of 30-90 mm on the divider shots).
+At 60 fps the camera sees only a few frames between the band and the divider (8 usable exit
+segments of 10 shots), so the energy transfer reads high; use 120 fps or more. Starting the 2D sim
+from a measured moment (6 frames after the puck reappears from under the arm), the median position
+error 0.3 s later is about 30 mm with the v0 physics and 8-9 mm with the fitted physics. Near a bounce
+the constant-velocity filter mixes the speeds before and after the bounce, so a restart within about
+50 ms after a bounce is less reliable.
+
+A strong point light (as in the lightbox) casts puck shadows sideways; a shadow in the blob moved the
+puck centres outward and biased the fits (friction +4%, energy transfer +12%). Light from straight
+above removes it.
 
 Found on the way: sysid joined frames from before and after a hidden end-wall
 bounce into one free slide (friction 0.33 instead of 0.25). Free-slide segments
@@ -1111,7 +1117,8 @@ pytest -q
 | `test_stats.py` | Wilson and t intervals against known values |
 | `test_mujoco_goalkeeper.py` | Paddle on the 2D arc, pan sign, Coulomb friction, calibrated wall and paddle restitution, gate crossing and divider, `check_env` and identical spaces, center saves a slow shot, randomization updates the model |
 | `test_band.py` | **Hysteresis loop closes** and loses the set fraction (3 exponents × 3 losses), monotonic tension, pre-tension, force direction, release energy balance, energy transfer, almost-straight launch, deflection, tiny pull does not launch |
-| `test_workspace.py` | Board fits between the side walls in front of the robot, far end open for the opponent, turning axis matches the config, play surface on the mat, flicked puck slows with Coulomb friction, C920 aims at the mat |
+| `test_slingpuck_scene.py` | Board in front of the robot, turning axis matches the config, board and robot on the same table, flicked puck slows with Coulomb friction, wall bounce keeps the configured restitution, opponent camera faces the robot |
+| `test_match_mujoco.py` | 5 black and 5 white pucks, both players shoot, no blow-up (speeds stay below 6 m/s, all pucks on the board), guard pose stands in the gate |
 | `test_twin.py` | Calibration round trip, detection within 1.5 mm on a rendered frame, touching pucks split, arm mask removes the gripper, tracker identities through hiding, crossing and a false detection, a hidden puck that reappears far away, sysid segments stop at a gap, synthetic session end to end |
 | `test_mujoco_sling.py` | Grasp opening, IK reaches the band and pull positions with the gripper down, **radial normal at the gate corner**, held puck follows the grasp, MuJoCo shot matches the 2D model (exit speed, outcome, miss) |
 | `test_sling_env.py` | `check_env` (Box and Dict), 2 steps with correction and 1 without, seeded repeat, noiseless center hit and off-center miss, reward, band depth seen after the pull, scripted baselines |

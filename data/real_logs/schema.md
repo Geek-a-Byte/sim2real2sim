@@ -94,7 +94,7 @@ One folder per session. The twin turns it into `twin/shots.csv` (section 3) and
 
 | File | What it holds |
 |---|---|
-| `camera.mp4` | Overhead camera video. 120 fps or more: at 60 fps the camera sees only 2-3 frames between the band and the divider, too few to fit the wall restitution and the band energy transfer. |
+| `camera.mp4` | Overhead camera video, 120 fps or more: at 60 fps the camera sees only a few frames between the band and the divider, and the fitted band energy transfer reads about 7% high. Light the board from straight above: sideways shadows shift the measured puck positions. |
 | `calibration.yaml` | From `python -m src.slingpuck.twin.calibration <video> --camera-height H --camera-nadir X Y`: the 4 clicked inner corners, the lens height above the board and the board point below the lens (tape measure). |
 | `joints.csv` | Joint readings, columns `t_s, shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper` (rad). `t_s` on the same clock as the video frames (frame k at k / fps). |
 | `robot_shots.csv` | One row per sling shot (below). |

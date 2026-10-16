@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-TRACK_COLUMNS = ["t_s", "puck_id", "x_m", "y_m", "vx_m_s", "vy_m_s", "hidden", "meas_x_m", "meas_y_m"]
+TRACK_COLUMNS = ["t_s", "puck_id", "colour", "x_m", "y_m", "vx_m_s", "vy_m_s", "hidden", "meas_x_m", "meas_y_m"]
 ROBOT_SHOT_COLUMNS = ["shot_id", "t_rest_s", "t_approach_s", "t_grasp_s", "t_release_s", "cmd_slide_m", "cmd_angle_rad",
                       "cmd_pull_m"]
 PULLED_WINDOW_S = 0.3
@@ -29,7 +29,7 @@ FLIGHT_WINDOW_S = 1.0
 
 
 def tracks_frame(tracker) -> pd.DataFrame:
-    rows = [(t, tr.id, x, y, vx, vy, int(h), mx, my)
+    rows = [(t, tr.id, tr.colour, x, y, vx, vy, int(h), mx, my)
             for tr in tracker.tracks if tr.confirmed for (t, x, y, vx, vy, h, mx, my) in tr.history]
     return pd.DataFrame(rows, columns=TRACK_COLUMNS).sort_values(["t_s", "puck_id"]).reset_index(drop=True)
 

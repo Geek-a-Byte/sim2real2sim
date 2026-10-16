@@ -42,7 +42,6 @@ from src.slingpuck.config import REPO_ROOT
 from src.slingpuck.kinematics import GoalkeeperGeometry
 from src.slingpuck.physics.backend import GateCrossing, PaddleState, PuckPhysicsBackend, StepEvents
 from src.slingpuck.physics.servo_model import latency_steps
-from src.slingpuck.workspace import add_lightbox, board_floor_thickness
 
 SO101_XML = REPO_ROOT / "assets" / "mujoco" / "robotstudio_so101" / "so101.xml"
 HOLD_JOINTS = ("shoulder_lift", "elbow_flex", "wrist_flex")
@@ -107,6 +106,20 @@ def _divider_boxes(cfg):
 WALL_PAIRS = ("wall_left", "wall_right", "wall_agent", "wall_opponent", "divider_left", "divider_right")
 
 
+def board_floor_thickness(cfg: dict) -> float:
+    """Board base under the play surface: outer height minus the wall height above the surface."""
+    return cfg["board"]["outer_height_m"] - cfg["board"]["wall_height_m"]
+
+
+def add_table_and_light(body, table_z: float):
+    """Table plane (visual) and one light straight from above. A directional light from above casts the
+    puck shadows straight down, so they do not shift the puck blobs in the twin's camera image."""
+    body.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.0, 1.0, 0.01], pos=[0, 0, table_z],
+                  rgba=[0.42, 0.40, 0.37, 1], contype=0, conaffinity=0)
+    body.add_light(name="overhead", pos=[0, 0, 1.0], dir=[0, 0, -1], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+                   diffuse=[0.55, 0.55, 0.55], specular=[0.1, 0.1, 0.1])   # With the fill light: board not overexposed
+
+
 def add_board(body, cfg: dict):
     """Play surface, walls and the divider with its gate, in the board frame of `body` (visual; see pairs)."""
     board = cfg["board"]
@@ -157,16 +170,13 @@ def _build_spec(cfg: dict, layout: SceneLayout, pose: ArmHoldPose | None) -> muj
             rgba=[0.92, 0.41, 0.20, 1], contype=0, conaffinity=0)
         _add_pairs(spec, cfg)
 
-    # Visual only: the lightbox workspace (table, foam box, mat, C920) placed at the robot base, sky, lights, cameras.
-    add_lightbox(world.add_body(name="lightbox", pos=layout.base_pos.tolist(), quat=layout.base_quat.tolist()))
+    # Visual only: table (the robot and the board stand on it), sky, lights, cameras.
+    add_table_and_light(world, -board_floor_thickness(cfg))
     spec.add_texture(name="sky", type=mujoco.mjtTexture.mjTEXTURE_SKYBOX, builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
                      rgb1=[0.86, 0.89, 0.93], rgb2=[0.55, 0.60, 0.68], width=512, height=3072)
-    # The lightbox adds its overhead light (add_lightbox); these only fill in, so the white board is not overexposed.
-    spec.visual.headlight.ambient = [0.25, 0.25, 0.25]
-    spec.visual.headlight.diffuse = [0.3, 0.3, 0.3]
-    world.add_light(pos=[0.6, 0.6, 0.8], dir=[-0.5, -0.5, -0.7], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-                    diffuse=[0.25, 0.25, 0.25], castshadow=0)
-    # Cameras stay inside the lightbox (its back wall is 3 cm behind the board's far end).
+    # Fill light only, kept low so the board keeps its wood colour (an overexposed board hides the white pucks).
+    spec.visual.headlight.ambient = [0.2, 0.2, 0.2]
+    spec.visual.headlight.diffuse = [0.1, 0.1, 0.1]
     world.add_camera(name="top", pos=[0, -0.02, 0.75], quat=[1, 0, 0, 0], fovy=45)
     world.add_camera(name="side", pos=[0.30, -0.30, 0.32], xyaxes=_xyaxes([0.30, -0.30, 0.32], [0.0, -0.03, 0.0]),
                      fovy=50)

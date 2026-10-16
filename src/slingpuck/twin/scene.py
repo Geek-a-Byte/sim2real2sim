@@ -24,7 +24,7 @@ from src.slingpuck.physics.mujoco_sling import (
 from src.slingpuck.physics.puck_dynamics import Fast2DPuckSim
 
 JOINTS = ARM_JOINTS + ("gripper",)
-PUCK_RGBA = (0.08, 0.08, 0.08, 1.0)
+PUCK_RGBA = {"black": (0.06, 0.06, 0.06, 1.0), "white": (0.96, 0.96, 0.94, 1.0)}  # Robot's / human's pucks
 HIDDEN_ALPHA = 0.3
 PARK_Z = -1.0
 BAND_RGBA = np.array([0.80, 0.12, 0.10, 1.0], np.float32)
@@ -53,7 +53,7 @@ class TwinScene:
         for i in range(n_pucks):
             b = spec.worldbody.add_body(name=f"twin_puck_{i}", mocap=True, pos=[0.0, 0.0, PARK_Z])
             b.add_geom(name=f"twin_puck_{i}", type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[r, 0.5 * th, 0],
-                       rgba=list(PUCK_RGBA), contype=0, conaffinity=0)
+                       rgba=list(PUCK_RGBA["black"]), contype=0, conaffinity=0)
         self.overhead_pos = np.array([overhead_nadir[0], overhead_nadir[1], overhead_height_m])
         spec.worldbody.add_camera(name="overhead", pos=self.overhead_pos.tolist(), xyaxes=overhead_xyaxes(),
                                   fovy=overhead_fovy_deg)
@@ -112,7 +112,7 @@ class TwinScene:
         return self.data.site_xpos[self._site][:2].copy()
 
     def set_pucks(self, states):
-        """states: PuckState list from MultiPuckTracker (or anything with id, pos, hidden)."""
+        """states: PuckState list from MultiPuckTracker (or anything with id, pos, hidden, optional colour)."""
         z = 0.5 * self.cfg["puck"]["thickness_m"]
         live = {s.id for s in states}
         for tid in [t for t in self.slots if t not in live]:
@@ -130,7 +130,7 @@ class TwinScene:
                 continue
             used.add(k)
             self.data.mocap_pos[self._mocap[k]] = [s.pos[0], s.pos[1], z]
-            rgba = list(PUCK_RGBA)
+            rgba = list(PUCK_RGBA[getattr(s, "colour", "black")])
             rgba[3] = HIDDEN_ALPHA if s.hidden else 1.0
             self.model.geom_rgba[self._geom[k]] = rgba
         for k in set(range(self.n_pucks)) - used:

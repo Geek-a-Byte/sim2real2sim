@@ -265,6 +265,7 @@ def _fit_segments(segs, a0):
 
     lo = [0.0] + [-np.inf, -np.inf, -2 * np.pi, 0.01] * len(segs)
     hi = [50.0] + [np.inf, np.inf, 2 * np.pi, 20.0] * len(segs)
+    x0 = np.clip(x0, np.array(lo) + 1e-9, np.array(hi) - 1e-9)  # A slow segment can guess a speed below 0.01
     return least_squares(resid, x0, bounds=(lo, hi), x_scale="jac")
 
 

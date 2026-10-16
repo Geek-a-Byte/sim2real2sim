@@ -10,8 +10,10 @@ Each camera frame:
 4. Unmatched detections start tentative tracks. A tentative track becomes a
    puck after `confirm_frames` hits in a row; a single false detection (an arm
    part) dies. When all `n_pucks` pucks have tracks, an unmatched detection is
-   given to the nearest hidden puck instead (the board holds a fixed number of
-   pucks, so a new puck is an old puck that reappeared).
+   given to the nearest hidden puck of the same colour instead (the board holds a
+   fixed number of pucks, so a new puck is an old puck that reappeared).
+   With colours (black robot pucks, white human pucks), a detection never matches
+   a puck of the other colour.
 5. Unmatched pucks are hidden: they coast at their last velocity for `coast_s`,
    then stay where they were last seen (pucks under a hand do not move far on
    their own).
@@ -37,6 +39,7 @@ class Track:
     last_seen: float = 0.0
     hidden: bool = False
     last_meas: np.ndarray | None = None
+    colour: str | None = None
     history: list = field(default_factory=list)  # (t, x, y, vx, vy, hidden, meas_x, meas_y)
 
 
@@ -47,6 +50,7 @@ class PuckState:
     vel: np.ndarray
     hidden: bool
     hidden_s: float
+    colour: str | None = None
 
 
 class MultiPuckTracker:
@@ -86,18 +90,24 @@ class MultiPuckTracker:
         if tr.hits >= self.confirm_frames:
             tr.confirmed = True
 
-    def update(self, t: float, detections: list[np.ndarray]) -> list[PuckState]:
+    def update(self, t: float, detections: list[np.ndarray], colours: list[str] | None = None) -> list[PuckState]:
+        """colours (optional, one per detection): a detection never matches a puck of the other colour."""
         self.t = t
         dets = [np.asarray(d, float) for d in detections]
+        cols = list(colours) if colours is not None else [None] * len(dets)
+
+        def clash(tr, j):
+            return tr.colour is not None and cols[j] is not None and tr.colour != cols[j]
         tracks = self.tracks
         matched_t, matched_d = set(), set()
         if tracks and dets:
             pred = np.array([self._predict(tr, t) for tr in tracks])
             cost = np.linalg.norm(pred[:, None, :] - np.array(dets)[None, :, :], axis=2)
+            cost += np.array([[1e3 if clash(tr, j) else 0.0 for j in range(len(dets))] for tr in tracks])
             # Confirmed tracks first: give them a lower cost than tentative ones at the same distance.
             biased = cost + np.array([0.0 if tr.confirmed else 0.01 for tr in tracks])[:, None]
-            rows, cols = linear_sum_assignment(biased)
-            for i, j in zip(rows, cols):
+            rows, assigned = linear_sum_assignment(biased)
+            for i, j in zip(rows, assigned):
                 if cost[i, j] <= self._gate(tracks[i], t):
                     self._hit(tracks[i], t, dets[j])
                     matched_t.add(i)
@@ -105,7 +115,7 @@ class MultiPuckTracker:
         free = [j for j in range(len(dets)) if j not in matched_d]
         n_confirmed = sum(tr.confirmed for tr in tracks)
         for j in free:
-            hidden = [i for i, tr in enumerate(tracks) if tr.confirmed and i not in matched_t]
+            hidden = [i for i, tr in enumerate(tracks) if tr.confirmed and i not in matched_t and not clash(tr, j)]
             if n_confirmed >= self.n_pucks and hidden:
                 # Fixed puck count: a detection with no track is a hidden puck that reappeared.
                 i = min(hidden, key=lambda k: np.linalg.norm(self._predict(tracks[k], t) - dets[j]))
@@ -114,7 +124,7 @@ class MultiPuckTracker:
                 self._hit(tracks[i], t, dets[j])
                 matched_t.add(i)
             elif n_confirmed < self.n_pucks:
-                tr = Track(self._next_id, self._new_kf(), last_seen=t)
+                tr = Track(self._next_id, self._new_kf(), last_seen=t, colour=cols[j])
                 self._next_id += 1
                 self._hit(tr, t, dets[j])
                 tracks.append(tr)
@@ -143,5 +153,6 @@ class MultiPuckTracker:
             pos = self._predict(tr, t)
             est = tr.kf.estimate(t)
             vel = est[1] if est is not None and t - tr.last_seen <= self.coast_s else np.zeros(2)
-            out.append(PuckState(tr.id, np.asarray(pos, float), np.asarray(vel, float), tr.hidden, t - tr.last_seen))
+            out.append(PuckState(tr.id, np.asarray(pos, float), np.asarray(vel, float), tr.hidden, t - tr.last_seen,
+                                 tr.colour))
         return out
