@@ -1,5 +1,5 @@
 # Physics parameters, version 0: UNCALIBRATED.
-# sysid writes physics_params_v1.yaml, v2, ... Load by version with
+# Calibrated values go in physics_params_v1.yaml, v2, ... Load by version with
 # slingpuck.config.load_config(params_version="v0" | "latest").
 #
 # Reference board: moopok Fast Sling Puck, size M (Amazon B086KWXPTY).
@@ -21,16 +21,14 @@ board:
   divider_thickness_m: 0.010 # TODO: measure center divider thickness
   wall_height_m: 0.015       # TODO: measure wall/divider height above the play surface (MuJoCo only)
   gate_width_m: 0.034        # [user] measured 3.4 cm (4.3 mm clearance per side for the 1 in puck)
-  restitution: 0.85          # TODO: fit by sysid (puck on wood wall)
-  paddle_restitution: 0.50   # TODO: fit by sysid
+  restitution: 0.85          # TODO: measure (puck on wood wall; MuJoCo uses it for all puck contacts)
 
 puck:
   radius_m: 0.0127           # [user] 1 in diameter. TODO: confirm in mm (calipers)
   thickness_m: 0.0102        # [image] 0.4 in. TODO: confirm on size M
   mass_kg: 0.027             # [user] weighed 27 g. CHECK: gives density 5.2 g/cm^3 for a 1 x 0.4 in puck;
                              # wood is 0.5-0.75. 27 g / 6 = 4.5 g, so the scale may have held several pucks.
-  friction_kinetic: 0.20     # TODO: fit by sysid (wood on wood)
-  restitution: 0.90          # TODO: fit by sysid (puck on puck)
+  friction_kinetic: 0.20     # TODO: measure (wood on wood)
 
 band:
   # One band per side, stretched between pegs at the side walls, parallel to the
@@ -43,46 +41,26 @@ band:
   # hysteresis_loss_factor of the loading work.
   anchor_span_m: 0.1854      # [derived] = inner width; assumes pegs at the side walls. TODO: measure peg spacing
   band_offset_from_end_wall_m: 0.05 # TODO: measure (band line to agent end wall)
-  natural_length_m: 0.150    # TODO: fit from the band bench test (sets the pre-tension, ~7 N here)
-  stiffness_k_n_m: 200.0     # TODO: fit from the band bench test
-  stiffness_exponent: 1.0    # TODO: fit (1 = linear; > 1 stiffens with stretch)
-  hysteresis_loss_factor: 0.15 # TODO: fit from the band bench test (load/unload cycle)
-  energy_transfer: 0.70      # TODO: fit by sysid from launch speeds (band mass, slip-release losses)
-  max_pull_m: 0.030          # TODO: measure. Must be < band_offset - puck radius (0.035)
-
-arm:
-  deflection_compliance_m_per_n: 0.001  # TODO: fit by sysid
+  natural_length_m: 0.150    # TODO: measure with a band bench test (sets the pre-tension, ~7 N here)
+  stiffness_k_n_m: 200.0     # TODO: measure with a band bench test
+  stiffness_exponent: 1.0    # TODO: measure (1 = linear; > 1 stiffens with stretch)
+  hysteresis_loss_factor: 0.15 # TODO: measure with a band bench test (load/unload cycle)
+  energy_transfer: 0.70      # TODO: measure from launch speeds (band mass, slip-release losses)
 
 robot:
-  # SO-101 mounting and end effector, in the board frame.
+  # SO-101 mounting, in the board frame. The robot and the board stand on the same table.
   base_xy_m: [0.0, -0.2177]  # TODO: measure pan-axis position. Placeholder: 5 cm behind the agent end wall
-  pan_zero_offset_rad: 0.0   # TODO: calibrate shoulder_pan joint reading when the paddle is centered on the gate
-  paddle_width_m: 0.030      # TODO: measure end-effector blocking face width
-  paddle_thickness_m: 0.006  # TODO: measure end-effector thickness
-  paddle_height_m: 0.020     # TODO: measure end-effector blocking face height (MuJoCo only)
-  paddle_mass_kg: 0.020      # TODO: weigh the end effector (MuJoCo only)
-  paddle_clearance_m: 0.001  # Gap between the paddle bottom and the play surface (design)
-  base_z_m: -0.0099          # [derived] robot and board on the same table: the base is the board's own base
-                             # (outer height - wall height) below the play surface. TODO: measure (MuJoCo only)
 
 camera:
-  fps: 60                    # Plan default
   latency_s: 0.05            # TODO: measure (glass-to-tracker latency)
-  noise_std_m: 0.003         # TODO: measure (static puck, std of tracked position)
-  dropout_prob: 0.02         # TODO: measure (fraction of frames with no detection)
-
-# Optional overrides of configs/servo.yaml values that sysid fits (e.g. latency).
-servo: {}
 
 placeholders:
   - board.wall_thickness_m
   - board.divider_thickness_m
   - board.restitution
-  - board.paddle_restitution
   - puck.radius_m
   - puck.thickness_m
   - puck.friction_kinetic
-  - puck.restitution
   - band.anchor_span_m
   - band.band_offset_from_end_wall_m
   - band.natural_length_m
@@ -90,16 +68,6 @@ placeholders:
   - band.stiffness_exponent
   - band.hysteresis_loss_factor
   - band.energy_transfer
-  - band.max_pull_m
-  - arm.deflection_compliance_m_per_n
   - robot.base_xy_m
-  - robot.pan_zero_offset_rad
-  - robot.paddle_width_m
-  - robot.paddle_thickness_m
-  - robot.paddle_height_m
-  - robot.paddle_mass_kg
-  - robot.base_z_m
   - board.wall_height_m
   - camera.latency_s
-  - camera.noise_std_m
-  - camera.dropout_prob

@@ -1,4 +1,4 @@
-"""Phase 3 eval: match results of high-level selectors against the scripted opponent.
+"""Match eval: match results of high-level selectors against the scripted opponent.
 
     python -m src.slingpuck.eval.match_eval [--policies reload_rule tell_rule greedy_sling] \\
         [--runs logs/selector/<run> ...] [--matches 300] [--tell 0 0.5 1]
@@ -119,7 +119,7 @@ def plot(table, out_path, subtitle):
             (ax.yaxis if len(tells) > 1 else ax.xaxis).set_major_formatter(fmt)
     if len(tells) > 1:
         axes[0].legend(frameon=False, fontsize=9)
-    fig.suptitle(f"Phase 3 match results, 95% CI. {subtitle}", x=0.01, ha="left", fontsize=9, color=INK_2)
+    fig.suptitle(f"Match results, 95% CI. {subtitle}", x=0.01, ha="left", fontsize=9, color=INK_2)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, facecolor=SURFACE)
     plt.close(fig)
@@ -142,7 +142,6 @@ def main():
         config["match"]["observe_hand"] = False
     out = Path(args.out) if args.out else REPO_ROOT / "results" / "match" / f"{datetime.now():%Y%m%d_%H%M%S}"
     out.mkdir(parents=True, exist_ok=True)
-    table_env = MatchEnv(config)
     tells = args.tell if args.tell else [None]
 
     policies = [(name, SCRIPTED[name](config), True) for name in args.policies]
@@ -154,7 +153,7 @@ def main():
     table = []
     for name, policy, wrap in policies:
         for tell in tells:
-            env = MatchEnv(config, table_env.block)
+            env = MatchEnv(config)
             env = PrivilegedObsWrapper(env) if wrap else env
             rows = play(policy, env, args.matches, args.eval_seed, tell)
             t_val = config["opponent"]["tell_strength"] if tell is None else tell

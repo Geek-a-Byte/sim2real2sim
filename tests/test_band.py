@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from scipy.integrate import quad
 
-from src.slingpuck.physics.arm_deflection import pull_direction, solve_pull
 from src.slingpuck.physics.band_model import BandModel, BandParams
 
 
@@ -63,23 +62,14 @@ def test_energy_transfer_scales_exit_speed():
 
 
 def test_angled_pull_launches_almost_straight():
-    """Documents the main Phase 2 finding: the pull angle barely steers the puck."""
+    """A pre-stretched band launches almost straight: the match assumes straight shots."""
     b = band()
     straight = b.release((0.0, b.band_y - 0.025), 0.027, 0.2).exit_vel
-    p = np.array([0.0, b.band_y]) + 0.025 * pull_direction(np.deg2rad(30))
+    a = np.deg2rad(30)
+    p = np.array([0.0, b.band_y]) + 0.025 * np.array([np.sin(a), -np.cos(a)])
     angled = b.release(p, 0.027, 0.2).exit_vel
     assert abs(np.degrees(np.arctan2(straight[0], straight[1]))) < 1e-6
     assert abs(np.degrees(np.arctan2(angled[0], angled[1]))) < 3.0
-
-
-def test_deflection_matches_compliance_times_force():
-    b = band()
-    c = 0.002
-    r = solve_pull(b, (0.0, b.band_y), 0.0, 0.03, c)
-    resisting = -float(r.force @ pull_direction(0.0))
-    assert r.pull_m + c * resisting == pytest.approx(0.03, abs=1e-7)
-    assert r.pull_m < 0.03
-    assert solve_pull(b, (0.0, b.band_y), 0.0, 0.03, 0.0).pull_m == pytest.approx(0.03)
 
 
 def test_config_band(cfg):

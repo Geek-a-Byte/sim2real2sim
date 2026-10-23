@@ -3,7 +3,6 @@ import pytest
 
 mujoco = pytest.importorskip("mujoco")
 
-from src.slingpuck.physics.mujoco_goalkeeper import board_floor_thickness  # noqa: E402
 from src.slingpuck.so101_slingpuck import BASE_AXIS_X, board_to_robot, build  # noqa: E402
 
 
@@ -32,7 +31,6 @@ def test_board_and_robot_stand_on_the_same_table(cfg, scene):
     m, d = scene
     g = m.geom("surface").id
     assert d.geom_xpos[g][2] - m.geom_size[g][2] == pytest.approx(0.0, abs=1e-4)
-    assert board_floor_thickness(cfg) == pytest.approx(-cfg["robot"]["base_z_m"], abs=1e-4)
     assert "lb_wall_back" not in {m.geom(i).name for i in range(m.ngeom)}
 
 

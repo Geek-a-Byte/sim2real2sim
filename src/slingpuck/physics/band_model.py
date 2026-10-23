@@ -1,4 +1,4 @@
-"""Elastic band of the sling (Phase 2).
+"""Elastic band of the sling (one per side; the robot and the human use the same model).
 
 Geometry (board frame): the band runs between two anchors at
 (+-anchor_span/2, band_y). The puck rests against the band line; the arm pulls

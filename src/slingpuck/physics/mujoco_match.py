@@ -4,7 +4,7 @@ Scene: so101_slingpuck.build (table, board, bands, 5 black robot pucks, 5 white 
 site between the jaw tips and a simple hand (mocap) that comes from the opponent's end.
 All 10 pucks are in the physics: Coulomb friction, bounces off the walls, the divider and each other.
 
-Robot (scripted, the Phase 3 "sling while the opponent reloads" rule):
+Robot (scripted, the "sling while the opponent reloads" rule, as policies.match_scripted.ReloadRule):
   guard  the closed gripper stands in the gate (blocks a shot: gate 3.4 cm, puck 2.54 cm)
   fetch  when the human is reloading and a black or white puck rests on the robot's half: move above
          it, grasp, drag it to the band, pull back, hold, release; then back to the guard pose.
@@ -14,8 +14,11 @@ place it on its band, pull back, hold, release. threat_prob of the shots aim at 
 
 A held puck is tied to the jaws or the hand by a stiff connect constraint. While a puck is held behind
 its band, the band force acts on it, and the constraint passes it to the arm (or the hand). On release, the band (unloading curve) pushes the puck to
-its band line, then the puck keeps energy_transfer of its energy, as in mujoco_sling. The human's band is
-the same model, mirrored.
+its band line, then the puck keeps energy_transfer of its energy (as BandModel.release). The human's band
+is the same model, mirrored.
+
+Grasp: the gripper points straight down and the jaws close on the left and right sides of the puck. The
+grasp site is the jaw-tip midpoint at the grasp opening (grasp_geometry).
 
 Rule (placeholder, as match_env): the first side with no pucks on it wins.
 Frames: the scene is in the robot frame (so101_slingpuck); game logic is in the board frame.
@@ -27,10 +30,12 @@ import mujoco
 import numpy as np
 from scipy.optimize import least_squares
 
-from src.slingpuck.opponent.scripted_opponent import LAUNCH_X_MAX_M, MISS_MIN_M, THREAT_HALF_WIDTH_M
+from src.slingpuck.opponent.scripted_opponent import LAUNCH_X_MAX_M, MISS_MIN_M, threat_half_width
 from src.slingpuck.physics.band_model import BandModel
-from src.slingpuck.physics.mujoco_sling import ARM_JOINTS, add_grasp_site, grasp_geometry, min_jerk
-from src.slingpuck.so101_slingpuck import PUCKS_PER_SIDE, board_pose, build
+from src.slingpuck.so101_slingpuck import PUCKS_PER_SIDE, SO101_XML, board_pose, build
+
+ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
+JAW_OPEN_EXTRA_M = 0.012        # Jaw tip gap beyond the puck diameter when open
 
 CONTROL_DT_S = 0.01
 LIFT_M = 0.05
@@ -39,7 +44,54 @@ HOLD_TIMECONST_S = 0.002        # Grip stiffness: about 1 mm of give under the 5
 SKIN = [0.87, 0.70, 0.58, 1]
 HUMAN_HOME = (0.0, 0.26, 0.09)  # Board frame: above the open end, behind the opponent's end wall
 SPEED_MOVE, SPEED_DRAG = 0.25, 0.12   # Grasp-site / hand speeds, m/s
-ROBOT_PULL_M = 0.025            # Straight pull for the robot's shot (Phase 2: a straight pull from the center scores)
+ROBOT_PULL_M = 0.025            # Straight pull for the robot's shot (a pre-stretched band launches almost straight)
+
+
+def min_jerk(tau: float) -> float:
+    tau = min(max(tau, 0.0), 1.0)
+    return tau ** 3 * (10.0 - 15.0 * tau + 6.0 * tau * tau)
+
+
+@dataclass(frozen=True)
+class GraspGeometry:
+    q_grasp: float          # Gripper joint angle with the jaw tips one puck diameter apart
+    q_open: float
+    site_pos: np.ndarray    # Grasp point (jaw tip midpoint at q_grasp) in the gripper body frame
+    site_quat: np.ndarray   # Same axes as gripperframe: x = approach, z = jaw opening direction
+
+
+def grasp_geometry(puck_diameter: float) -> GraspGeometry:
+    m = mujoco.MjModel.from_xml_path(str(SO101_XML))
+    d = mujoco.MjData(m)
+    g_adr = int(m.joint("gripper").qposadr[0])
+    tip_f, tip_m = m.geom("fixed_jaw_sph_tip1").id, m.geom("moving_jaw_sph_tip1").id
+    lo, hi = m.jnt_range[m.joint("gripper").id]
+
+    def gap(q):
+        d.qpos[g_adr] = q
+        mujoco.mj_kinematics(m, d)
+        return float(np.linalg.norm(d.geom_xpos[tip_m] - d.geom_xpos[tip_f]))
+
+    def solve(width):
+        a, b = lo, hi
+        for _ in range(60):
+            mid = 0.5 * (a + b)
+            a, b = (mid, b) if gap(mid) < width else (a, mid)
+        return 0.5 * (a + b)
+
+    q_grasp = solve(puck_diameter)
+    q_open = solve(puck_diameter + JAW_OPEN_EXTRA_M)
+    gap(q_grasp)
+    body = m.body("gripper").id
+    R, p = d.xmat[body].reshape(3, 3), d.xpos[body]
+    mid = 0.5 * (d.geom_xpos[tip_f] + d.geom_xpos[tip_m])
+    site = m.site("gripperframe").id
+    return GraspGeometry(q_grasp, q_open, R.T @ (mid - p), m.site_quat[site].copy())
+
+
+def add_grasp_site(spec: mujoco.MjSpec, grasp: GraspGeometry):
+    spec.body("gripper").add_site(name="grasp", pos=grasp.site_pos.tolist(), quat=grasp.site_quat.tolist(),
+                                  size=[0.002, 0, 0], rgba=[0.1, 0.8, 0.2, 1], group=3)
 
 
 @dataclass
@@ -251,7 +303,8 @@ class MatchSim:
         c = self.cfg["opponent"]
         pos = self.puck_pos(p)
         threat = bool(self.rng.random() < c["threat_prob"])
-        aim = self.rng.uniform(-THREAT_HALF_WIDTH_M, THREAT_HALF_WIDTH_M) if threat else \
+        half = threat_half_width(self.cfg)
+        aim = self.rng.uniform(-half, half) if threat else \
             self.rng.choice([-1, 1]) * self.rng.uniform(MISS_MIN_M, LAUNCH_X_MAX_M)
         u = self.rng.random()
         pull = c["max_pull_m"] * (0.3 + 0.7 * u)
