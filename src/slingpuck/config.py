@@ -1,12 +1,11 @@
-"""Config loading, physics-param versioning, and domain randomization.
+"""Config loading and physics-param versioning.
 
-The merged config is built from three files in ``configs/``:
+The merged config is built from two files in ``configs/``:
 
-1. ``servo.yaml``                - servo hardware model
-2. ``physics_params_v<N>.yaml``  - measured / fitted physics (versioned by sysid)
-3. ``env.yaml``                  - sim timing, tracker, opponent, scoring, randomization
+1. ``physics_params_v<N>.yaml``  - measured / fitted physics (versioned)
+2. ``env.yaml``                  - sim timing, opponent, match, scoring
 
-Later files override earlier ones key by key. ``cfg["meta"]`` records which
+The later file overrides the earlier one key by key. ``cfg["meta"]`` records which
 params version was used, which values are still uncalibrated placeholders, and
 the git state, so every run can be traced to its physics fit.
 """
@@ -19,7 +18,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -124,7 +122,6 @@ def load_config(
     """
     d = config_dir(cfg_dir)
     params_file = resolve_params_file(params_version, d)
-    servo = _read_yaml(d / "servo.yaml")
     params = _read_yaml(params_file)
     env = _read_yaml(d / "env.yaml")
 
@@ -132,14 +129,10 @@ def load_config(
     if params.get("version") != expected:
         raise ConfigError(f"{params_file.name} has version {params.get('version')!r}, expected {expected}")
 
-    placeholders = list(servo.pop("placeholders", []) or [])
-    placeholders += list(params.pop("placeholders", []) or [])
+    placeholders = list(params.pop("placeholders", []) or [])
     env.pop("placeholders", None)
-    # A params file that sets a servo value replaces the servo.yaml placeholder.
-    fitted_servo = {f"servo.{k}" for k in (params.get("servo") or {})}
-    placeholders = [p for p in placeholders if p not in fitted_servo]
 
-    cfg = deep_merge(deep_merge(servo, params), env)
+    cfg = deep_merge(params, env)
     if overrides:
         cfg = deep_merge(cfg, overrides)
 
@@ -166,35 +159,6 @@ def load_config(
         **git_state(),
     }
     return cfg
-
-
-def sample_randomized(cfg: dict, rng: np.random.Generator) -> dict:
-    """Return a copy of cfg with domain-randomized physics values.
-
-    The input cfg is not changed. Sampled values are recorded in
-    out["meta"]["randomized"] so they can be logged with each episode.
-    """
-    out = copy.deepcopy(cfg)
-    spec = cfg.get("randomization", {})
-    if not spec.get("enabled", False):
-        return out
-    sampled = {}
-    for path, rule in (spec.get("params") or {}).items():
-        nominal = get_path(cfg, path)
-        if "scale" in rule:
-            lo, hi = rule["scale"]
-            value = nominal * rng.uniform(lo, hi)
-        elif "range" in rule:
-            lo, hi = rule["range"]
-            value = rng.uniform(lo, hi)
-        else:
-            raise ConfigError(f"Randomization rule for {path} needs 'scale' or 'range'")
-        if "clip" in rule:
-            value = float(np.clip(value, *rule["clip"]))
-        set_path(out, path, float(value))
-        sampled[path] = float(value)
-    out.setdefault("meta", {})["randomized"] = sampled
-    return out
 
 
 def save_run_config(cfg: dict, run_dir: str | os.PathLike, seed: int | None = None) -> Path:

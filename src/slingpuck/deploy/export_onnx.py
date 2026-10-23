@@ -39,6 +39,7 @@ def export_ppo_to_onnx(model_path, onnx_path, obs_shape):
     print(f"Model successfully exported to {onnx_path}")
 
 if __name__ == "__main__":
-    # Example export for Phase 1 (Goalkeeper)
-    # Obs shape is (6,) based on M2
-    export_ppo_to_onnx("logs/gk_final.zip", "deploy/gk_policy.onnx", obs_shape=(6,))
+    # Example export of a match selector (M5). The actor input is the MatchEnv policy observation.
+    from src.slingpuck.envs.match_env import MatchEnv
+    export_ppo_to_onnx("logs/selector/final_model.zip", "deploy/selector_policy.onnx",
+                       obs_shape=(len(MatchEnv.POLICY_OBS_NAMES),))

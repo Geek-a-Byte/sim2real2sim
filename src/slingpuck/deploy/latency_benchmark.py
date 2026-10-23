@@ -40,4 +40,5 @@ def benchmark_onnx_latency(onnx_path, obs_shape, num_iterations=1000):
         print("Status: WARNING (Approaching control period limit)")
 
 if __name__ == "__main__":
-    benchmark_onnx_latency("deploy/gk_policy.onnx", obs_shape=(6,))
+    from src.slingpuck.envs.match_env import MatchEnv
+    benchmark_onnx_latency("deploy/selector_policy.onnx", obs_shape=(len(MatchEnv.POLICY_OBS_NAMES),))

@@ -1,8 +1,8 @@
-"""Phase 3: hierarchical match against a scripted opponent (event-level sim).
+"""Hierarchical match against a scripted opponent (event-level sim).
 
 The high-level policy picks one of three frozen primitives every decision_dt_s:
-  0 BLOCK  go to (or stay at) the gate; the Phase 1 block skill defends it
-  1 SLING  shoot the next puck (Phase 2 skill); the arm leaves the gate
+  0 BLOCK  go to (or stay at) the gate; the block primitive defends it
+  1 SLING  shoot the next puck (sling primitive); the arm leaves the gate
   2 HOLD   keep the arm where it is (at the band: stay ready for another sling)
 
 Arm states: GATE -> (SLING) TO_BAND -> SLINGING -> AT_BAND -> (BLOCK) TO_GATE -> GATE.
@@ -11,12 +11,10 @@ and TO_GATE the gate is undefended: this is the explicit recovery time.
 
 Fidelity. Millions of decisions are needed, so nothing is simulated at 1 kHz:
 - Opponent shots fly straight with Coulomb friction (analytic arrival time).
-- A threat that reaches the gate is saved with the measured probability of the
-  frozen block primitive (primitives/block.py): p_gate(speed) if the paddle was
-  settled at the gate when the shot launched, p_edge(speed, delay) if the arm was
-  just back from the band (delay = how late it arrived after the launch), and 0
-  if the arm was away from the gate.
-- An agent sling succeeds with the measured Phase 2 probability.
+- A threat that reaches the gate is saved with the probability of the block
+  primitive (primitives/block.py): it depends on the time between the arm's
+  return to the gate and the puck's arrival, and it is 0 if the arm is away.
+- An agent sling succeeds with the probability of the sling primitive.
 
 Puck bookkeeping: each side starts with pucks_per_side. A puck in flight belongs
 to no side until it resolves. Rewards and the win rule come from `scoring`
@@ -33,7 +31,7 @@ from gymnasium import spaces
 
 from src.slingpuck.opponent.scripted_opponent import PHASES, Opponent, Shot
 from src.slingpuck.physics.band_model import GRAVITY
-from src.slingpuck.primitives.block import BlockTable, load_or_build_block_table
+from src.slingpuck.primitives.block import BlockPrimitive
 from src.slingpuck.primitives.sling import SlingPrimitive
 
 BLOCK, SLING, HOLD = 0, 1, 2
@@ -46,17 +44,17 @@ class MatchEnv(gym.Env):
     metadata = {"render_modes": []}
     POLICY_OBS_NAMES = ("puck_valid", "puck_x", "puck_y", "puck_vx", "puck_vy",
                         "hand_x", "hand_y", "hand_vx", "hand_vy",
-                        *(f"arm_{s}" for s in ARM_STATES), "arm_time_left", "paddle_settled",
+                        *(f"arm_{s}" for s in ARM_STATES), "arm_time_left", "gate_covered",
                         "agent_pucks", "opp_pucks", "own_in_flight", "time_left")
     PRIVILEGED_OBS_NAMES = (*(f"opp_{p}" for p in PHASES), "opp_time_to_release", "next_threat", "next_x",
                             "next_speed", "incoming_threat", "incoming_time_to_gate")
 
-    def __init__(self, config: dict, block_table: BlockTable | None = None):
+    def __init__(self, config: dict):
         super().__init__()
         self.cfg = config
         self.m = config["match"]
         self.scoring = config["scoring"]
-        self.block = block_table if block_table is not None else load_or_build_block_table(config)
+        self.block = BlockPrimitive.from_config(config)
         self.sling = SlingPrimitive.from_config(config)
         hl = 0.5 * config["board"]["length_m"]
         self.half_length = hl
@@ -180,12 +178,7 @@ class MatchEnv(gym.Env):
             self.opp_side += 1  # Hit the divider (or fell short) and stays on the opponent side
             return 0.0
         self.stats["threats"] += 1
-        if self.gate_ready_since is None:
-            p = 0.0
-        elif self.gate_ready_since <= shot.t_launch - self.m["settle_after_return_s"]:
-            p = self.block.p_save(shot.speed, at_gate=True)
-        else:
-            p = self.block.p_save(shot.speed, at_gate=False, delay=max(0.0, self.gate_ready_since - shot.t_launch))
+        p = 0.0 if self.gate_ready_since is None else self.block.p_save(f["t_gate"] - self.gate_ready_since)
         if self.np_random.random() < p:
             self.stats["saves"] += 1
             self.opp_side += 1
@@ -235,8 +228,8 @@ class MatchEnv(gym.Env):
         else:
             hand_part = [0.0] * 4
         arm = [float(self.arm == s) for s in ARM_STATES]
-        settled = self.gate_ready_since is not None and self.t - self.gate_ready_since >= self.m["settle_after_return_s"]
-        obs = np.array([*puck_part, *hand_part, *arm, max(self.arm_until - self.t, 0.0), float(settled),
+        covered = self.gate_ready_since is not None and self.t - self.gate_ready_since >= self.m["cover_time_s"]
+        obs = np.array([*puck_part, *hand_part, *arm, max(self.arm_until - self.t, 0.0), float(covered),
                         self.agent_side / n, self.opp_side / n, float(self.own is not None),
                         1.0 - self.t / self.m["max_time_s"]])
         return np.clip(obs, -OBS_CLIP, OBS_CLIP).astype(np.float32)

@@ -6,19 +6,16 @@ from gymnasium.utils.env_checker import check_env
 
 from src.slingpuck.envs.match_env import BLOCK, HOLD, SLING, MatchEnv
 from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
-from src.slingpuck.opponent.scripted_opponent import THREAT_HALF_WIDTH_M, Opponent
+from src.slingpuck.opponent.scripted_opponent import MISS_MIN_M, Opponent, threat_half_width
 from src.slingpuck.policies.match_scripted import AlwaysBlock, GreedySling, ReloadRule
-from src.slingpuck.primitives.block import BlockTable
-
-# Small hand-made table: a settled paddle saves everything; from the edge only slow, early shots.
-TABLE = BlockTable(np.array([0.8, 3.0]), np.array([0.0, 0.3]), np.array([1.0, 1.0]),
-                   np.array([[1.0, 0.0], [0.0, 0.0]]))
+from src.slingpuck.primitives.block import BlockPrimitive
 
 
 def env_for(cfg, **match):
+    """A covered gate saves everything (save prob 1, hard cut at the cover time)."""
     c = copy.deepcopy(cfg)
-    c["match"].update(match)
-    return MatchEnv(c, TABLE)
+    c["match"].update({"block_save_prob": 1.0, "cover_time_std_s": 0.0, **match})
+    return MatchEnv(c)
 
 
 def play(env, policy, seed):
@@ -58,8 +55,10 @@ def test_tell_one_shows_launch_x_and_zero_hides_it(cfg):
 def test_threat_shots_aim_inside_the_gate(cfg):
     c = cycles(cfg, 1.0)
     threats = c[c[:, 2] == 1]
-    assert np.all(np.abs(threats[:, 1]) <= THREAT_HALF_WIDTH_M)
-    assert np.all(np.abs(c[c[:, 2] == 0][:, 1]) > THREAT_HALF_WIDTH_M)
+    half = threat_half_width(cfg)
+    assert half == pytest.approx(0.5 * cfg["board"]["gate_width_m"] - cfg["puck"]["radius_m"])
+    assert np.all(np.abs(threats[:, 1]) <= half)
+    assert np.all(np.abs(c[c[:, 2] == 0][:, 1]) > half)
     assert abs(len(threats) / len(c) - cfg["opponent"]["threat_prob"]) < 0.08
 
 
@@ -76,8 +75,8 @@ def test_opponent_phases_in_order_and_hand_continuous(cfg):
 
 # --------------------------------------------------------------- match env
 def test_check_env(cfg):
-    check_env(MatchEnv(cfg, TABLE), skip_render_check=True)
-    check_env(PrivilegedObsWrapper(MatchEnv(cfg, TABLE)), skip_render_check=True)
+    check_env(MatchEnv(cfg), skip_render_check=True)
+    check_env(PrivilegedObsWrapper(MatchEnv(cfg)), skip_render_check=True)
 
 
 def test_pucks_are_conserved_and_rewards_add_up(cfg):
@@ -174,9 +173,29 @@ def test_reload_detection_from_the_hand(cfg):
     assert np.mean(seen["reload"]) > 0.7
 
 
-def test_block_table_interpolation():
-    assert TABLE.p_save(0.8, at_gate=True) == 1.0
-    assert TABLE.p_save(0.8, at_gate=False, delay=0.0) == 1.0
-    assert TABLE.p_save(0.8, at_gate=False, delay=0.15) == pytest.approx(0.5)
-    assert TABLE.p_save(1.9, at_gate=False, delay=0.0) == pytest.approx(0.5)
-    assert TABLE.p_save(5.0, at_gate=False, delay=0.0) == 0.0  # Clipped to the fastest speed
+def test_block_primitive():
+    hard = BlockPrimitive(0.9, cover_time_s=0.05, cover_time_std_s=0.0)
+    assert hard.p_save(0.06) == 0.9 and hard.p_save(0.04) == 0.0
+    assert hard.p_save(np.inf) == 0.9   # The arm was at the gate from the start
+    soft = BlockPrimitive(1.0, cover_time_s=0.05, cover_time_std_s=0.02)
+    assert soft.p_save(0.05) == pytest.approx(0.5)
+    assert soft.p_save(0.09) == pytest.approx(0.977, abs=1e-3)   # 2 std early
+    assert soft.p_save(0.01) == pytest.approx(0.023, abs=1e-3)
+
+
+def test_late_return_concedes_fast_threats(cfg):
+    """An arm back at the gate just before a fast threat arrives is too late to cover it."""
+    env = env_for(cfg, cover_time_s=10.0)   # Covering takes 10 s
+    env.reset(seed=0)
+    env.gate_ready_since = 0.0              # As if the arm came back at the start
+    while env.stats["threats"] == 0:
+        env.step(BLOCK)
+    assert env.t < 10.0
+    assert env.stats["saves"] == 0 and env.stats["received"] == 1
+
+
+def test_bad_gate_geometry_is_rejected(cfg):
+    c = copy.deepcopy(cfg)
+    c["board"]["gate_width_m"] = 2 * (cfg["puck"]["radius_m"] + MISS_MIN_M)
+    with pytest.raises(ValueError):
+        threat_half_width(c)

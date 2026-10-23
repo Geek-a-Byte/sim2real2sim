@@ -1,4 +1,4 @@
-"""Scripted human opponent for Phase 3.
+"""Scripted human opponent.
 
 Cycle: reload -> place -> pull -> hold -> release, then the next cycle if the
 opponent still has a puck on its side.
@@ -9,8 +9,8 @@ opponent still has a puck on its side.
   release: the puck launches straight toward the agent (-y) from x_launch.
 
 The hand covers the loaded puck from the overhead camera, so the camera sees
-only the hand. Shots fly straight (Phase 2 finding), so x_launch decides whether
-a shot is a threat (goes through the gate). The tell: during place, pull and hold
+only the hand. Shots fly straight (the pre-stretched band launches almost
+straight), so x_launch decides whether a shot is a threat (goes through the gate). The tell: during place, pull and hold
 the hand x is   tell * x_launch + (1 - tell) * x_decoy,   with x_decoy drawn from
 the same distribution as x_launch. tell_strength 0 = the hand says nothing about
 the threat; 1 = it shows the launch x exactly.
@@ -19,13 +19,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
-THREAT_HALF_WIDTH_M = 0.003   # Launch |x| below this goes through the gate (Phase 2: about +-3 mm)
 MISS_MIN_M = 0.006            # Non-threat shots launch at least this far from the center
 LAUNCH_X_MAX_M = 0.06
 PICK_X_MAX_M = 0.07
 PICK_Y_RANGE_M = (0.02, 0.09)  # Where loose pucks lie on the opponent half (in front of the band)
 HOME = np.array([0.0, 0.16])   # Hand rest position when the opponent has no puck
 PHASES = ("reload", "place", "pull", "hold", "idle")
+
+
+def threat_half_width(cfg: dict) -> float:
+    """A straight shot with launch |x| below this goes through the gate without touching a corner."""
+    half = 0.5 * cfg["board"]["gate_width_m"] - cfg["puck"]["radius_m"]
+    if not 0.0 < half < MISS_MIN_M:
+        raise ValueError(f"gate clearance {half} m must be in (0, MISS_MIN_M = {MISS_MIN_M} m)")
+    return half
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,7 @@ class Opponent:
         self.cfg = cfg["opponent"]
         self.rng = rng
         self.band_y = 0.5 * cfg["board"]["length_m"] - cfg["band"]["band_offset_from_end_wall_m"]
+        self.threat_half = threat_half_width(cfg)
         self.cycle: _Cycle | None = None
         self.idle_since = 0.0
         self.idle_pos = HOME.copy()
@@ -55,7 +63,7 @@ class Opponent:
     # ------------------------------------------------------------ sampling
     def _launch_x(self, threat: bool) -> float:
         if threat:
-            return float(self.rng.uniform(-THREAT_HALF_WIDTH_M, THREAT_HALF_WIDTH_M))
+            return float(self.rng.uniform(-self.threat_half, self.threat_half))
         return float(self.rng.choice([-1, 1]) * self.rng.uniform(MISS_MIN_M, LAUNCH_X_MAX_M))
 
     def _start_cycle(self, t0: float, start_pos: np.ndarray):

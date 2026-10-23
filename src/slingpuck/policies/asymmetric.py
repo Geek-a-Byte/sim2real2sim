@@ -1,8 +1,8 @@
 """Asymmetric actor-critic for SB3 PPO.
 
 The actor reads only obs["policy"] (tracked, deployable inputs). The critic
-reads obs["policy"] and obs["privileged"] (sim ground truth and randomized
-params). The critic is used only in training, so the deployed actor never
+reads obs["policy"] and obs["privileged"] (sim ground truth, such as the
+opponent's internal state). The critic is used only in training, so the deployed actor never
 needs privileged inputs. Use with envs.wrappers.PrivilegedObsWrapper.
 """
 import gymnasium as gym

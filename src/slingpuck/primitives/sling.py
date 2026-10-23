@@ -1,10 +1,11 @@
-"""Frozen sling primitive for Phase 3: timing and success probability.
+"""Sling primitive: timing and success probability.
 
-The Phase 2 skill (slide, pull, look, correct, release) is used as a black box:
+The sling (fetch, place on the band, pull, release) is used as a black box:
 it takes move_gate_to_band_s (if the arm starts at the gate), then fetch_time_s
 (bring the next puck from the agent half to the band) plus sling_core_s,
 then the puck flies sling_flight_s to the gate and goes through with
-probability sling_success_prob (measured by eval/hole_rate.py).
+probability sling_success_prob. All values are placeholders until they are
+measured on the robot.
 """
 from dataclasses import dataclass
 

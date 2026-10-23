@@ -1,4 +1,4 @@
-"""Scripted Phase 3 policies (high-level selectors). Same predict() signature as SB3 models.
+"""Scripted match policies (high-level selectors). Same predict() signature as SB3 models.
 
 Actions: 0 BLOCK, 1 SLING, 2 HOLD (see envs/match_env.py).
 

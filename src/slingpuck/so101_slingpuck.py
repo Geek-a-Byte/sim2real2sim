@@ -23,13 +23,23 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from src.slingpuck.config import load_config
+from src.slingpuck.config import REPO_ROOT, load_config
 from src.slingpuck.physics.band_model import BandModel
-from src.slingpuck.physics.mujoco_goalkeeper import (
-    CONTACT_SOLIMP, SO101_XML, WALL_PAIRS, _pan_anchor_local, add_board, add_table_and_light, board_floor_thickness)
-from src.slingpuck.physics.mujoco_sling import add_band_pegs
 
+SO101_XML = REPO_ROOT / "assets" / "mujoco" / "robotstudio_so101" / "so101.xml"
 GRAVITY = 9.81
+CONTACT_SOLIMP = (0.99, 0.99, 0.001, 0.5, 2.0)  # dmin, dmax, width, midpoint, power
+WALL_PAIRS = ("wall_left", "wall_right", "wall_agent", "wall_opponent", "divider_left", "divider_right")
+
+
+def _pan_anchor_local() -> np.ndarray:
+    """shoulder_pan axis position in the SO-101 base frame."""
+    m = mujoco.MjModel.from_xml_path(str(SO101_XML))
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    return d.xanchor[m.joint("shoulder_pan").id].copy()
+
+
 BASE_AXIS_X = float(_pan_anchor_local()[0])   # the arm's turning axis is 3.88 cm in front of the base origin
 PUCKS_PER_SIDE = 5
 RACK_Y = 0.07                              # Board y of the puck rows on each half (|y|, m), clear of the band
@@ -38,6 +48,59 @@ HOME = [1.319, -0.862, 0.582, 1.658, -0.301, 0.268]  # start pose (rad): gripper
 BAND_RGBA = [0.80, 0.12, 0.10, 1]
 PUCK_RGBA = {"a": [0.06, 0.06, 0.06, 1],    # Robot (agent) pucks: black
              "o": [0.96, 0.96, 0.94, 1]}    # Human (opponent) pucks: white
+
+
+def _divider_boxes(cfg):
+    hw, hg = 0.5 * cfg["board"]["width_m"], 0.5 * cfg["board"]["gate_width_m"]
+    ht = 0.5 * cfg["board"]["divider_thickness_m"]
+    return [(-hw, -hg, -ht, ht), (hg, hw, -ht, ht)]
+
+
+def board_floor_thickness(cfg: dict) -> float:
+    """Board base under the play surface: outer height minus the wall height above the surface."""
+    return cfg["board"]["outer_height_m"] - cfg["board"]["wall_height_m"]
+
+
+def add_table_and_light(body, table_z: float):
+    """Table plane (visual) and one light straight from above, so the puck shadows fall straight down."""
+    body.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1.0, 1.0, 0.01], pos=[0, 0, table_z],
+                  rgba=[0.42, 0.40, 0.37, 1], contype=0, conaffinity=0)
+    body.add_light(name="overhead", pos=[0, 0, 1.0], dir=[0, 0, -1], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+                   diffuse=[0.55, 0.55, 0.55], specular=[0.1, 0.1, 0.1])   # With the fill light: board not overexposed
+
+
+def add_board(body, cfg: dict):
+    """Play surface, walls and the divider with its gate, in the board frame of `body` (visual; see pairs)."""
+    board = cfg["board"]
+    hw, hl = 0.5 * board["width_m"], 0.5 * board["length_m"]
+    wt, wh = board["wall_thickness_m"], board["wall_height_m"]
+    wood, edge = [0.86, 0.78, 0.64, 1], [0.62, 0.50, 0.33, 1]
+
+    def box(name, center, half, rgba):
+        return body.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_BOX, pos=list(center), size=list(half),
+                             rgba=rgba, contype=0, conaffinity=0)
+
+    ft = board_floor_thickness(cfg)
+    box("surface", (0, 0, -0.5 * ft), (hw + wt, hl + wt, 0.5 * ft), wood)
+    box("wall_left", (-hw - wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
+    box("wall_right", (hw + wt / 2, 0, wh / 2), (wt / 2, hl + wt, wh / 2), edge)
+    box("wall_agent", (0, -hl - wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
+    box("wall_opponent", (0, hl + wt / 2, wh / 2), (hw, wt / 2, wh / 2), edge)
+    for name, (xmin, xmax, ymin, ymax) in zip(("divider_left", "divider_right"), _divider_boxes(cfg)):
+        box(name, ((xmin + xmax) / 2, (ymin + ymax) / 2, wh / 2), ((xmax - xmin) / 2, (ymax - ymin) / 2, wh / 2), edge)
+
+
+def add_band_pegs(cfg: dict, body):
+    """Band pegs on both sides, one puck radius behind each band line (the band touches the back of the
+    puck instead of passing through it). body: its frame must be the board frame."""
+    band_y = BandModel.from_config(cfg).band_y
+    r, wh = cfg["puck"]["radius_m"], cfg["board"]["wall_height_m"]
+    half = 0.5 * cfg["band"]["anchor_span_m"]
+    for side, sy in (("agent", 1.0), ("opponent", -1.0)):
+        for sx in (-1.0, 1.0):
+            body.add_geom(name=f"peg_{side}_{'l' if sx < 0 else 'r'}", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                          size=[0.003, 0.5 * wh, 0], pos=[sx * half, sy * (band_y - r), 0.5 * wh],
+                          rgba=[0.75, 0.75, 0.78, 1], contype=0, conaffinity=0)
 
 
 def contact_params(cfg: dict):
@@ -75,7 +138,7 @@ def build(cfg: dict):
     pos, yaw = board_pose(cfg)
     board = w.add_body(name="board", pos=pos.tolist(), quat=[math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)])
     add_board(board, cfg)
-    add_band_pegs(spec, cfg, board)
+    add_band_pegs(cfg, board)
     band_y, r = BandModel.from_config(cfg).band_y, cfg["puck"]["radius_m"]
     half_span, z_mid = 0.5 * cfg["band"]["anchor_span_m"], 0.5 * cfg["puck"]["thickness_m"]
     for side, sy in (("agent", 1.0), ("opponent", -1.0)):   # Bands at rest (visual), one puck radius behind the line
@@ -102,7 +165,7 @@ def build(cfg: dict):
                        rgba=PUCK_RGBA[side], contype=0, conaffinity=0)
             b.add_geom(name=f"{name}_col", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[r, 0, 0], density=0.0,
                        rgba=[0, 0, 0, 0], group=3, contype=0, conaffinity=0)
-    # Bounces: frictionless contacts as a direct spring-damper (as mujoco_goalkeeper; the (timeconst,
+    # Bounces: frictionless contacts as a direct spring-damper (the (timeconst,
     # dampratio) form with a low damping ratio gained energy on every bounce). Damping ratio from the
     # configured restitution: a head-on bounce keeps about that fraction of the normal speed.
     solref, solimp = contact_params(cfg)

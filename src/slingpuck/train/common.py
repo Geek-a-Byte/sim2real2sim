@@ -8,36 +8,18 @@ import yaml
 from stable_baselines3.common.callbacks import BaseCallback
 
 from src.slingpuck.config import REPO_ROOT
-from src.slingpuck.envs.goalkeeper_env import GoalkeeperEnv
-from src.slingpuck.envs.sling_env import SlingEnv
+from src.slingpuck.envs.match_env import MatchEnv
 from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
 
 
-def make_goalkeeper_env(config: dict, asymmetric: bool, backend: str = "2d"):
-    """backend: "2d" (Fast2DPuckSim + ServoModel) or "mujoco" (MuJoCo board, puck and SO-101)."""
-    if backend == "mujoco":
-        from src.slingpuck.envs.mujoco_goalkeeper_env import MujocoGoalkeeperEnv
-        env = MujocoGoalkeeperEnv(config)
-    elif backend == "2d":
-        env = GoalkeeperEnv(config)
-    else:
-        raise ValueError(f"unknown backend {backend!r}")
+def make_match_env(config: dict, asymmetric: bool):
+    env = MatchEnv(config)
     return PrivilegedObsWrapper(env) if asymmetric else env
 
 
-def goalkeeper_env_fn(config: dict, asymmetric: bool, backend: str = "2d"):
+def match_env_fn(config: dict, asymmetric: bool):
     """Picklable env factory for SubprocVecEnv."""
-    return partial(make_goalkeeper_env, config, asymmetric, backend)
-
-
-def make_sling_env(config: dict, asymmetric: bool):
-    env = SlingEnv(config)
-    return PrivilegedObsWrapper(env) if asymmetric else env
-
-
-def sling_env_fn(config: dict, asymmetric: bool):
-    """Picklable env factory for SubprocVecEnv."""
-    return partial(make_sling_env, config, asymmetric)
+    return partial(make_match_env, config, asymmetric)
 
 
 def load_trained_run(run_dir, device: str = "cpu"):
@@ -72,7 +54,7 @@ def new_run_dir(task: str, params_version: str, seed: int) -> tuple[str, Path]:
 class OutcomeLoggerCallback(BaseCallback):
     """Log the fraction of episode outcomes (info["outcome"]) per rollout to TensorBoard."""
 
-    def __init__(self, prefix: str, outcomes=("save", "goal", "none")):
+    def __init__(self, prefix: str, outcomes=("win", "loss", "time")):
         super().__init__()
         self.prefix = prefix
         self.outcomes = outcomes
