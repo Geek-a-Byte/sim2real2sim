@@ -1,0 +1,69 @@
+# Generalized method (branch `generalized`): one goal-conditioned SO-101 policy for any task.
+# Design choices for the sim, not measured facts. Loaded by src/slingpuck/general/common.py.
+# Robot frame: origin at the SO-101 base on the table, x forward, y left, z up. Meters.
+
+robot:
+  table_z_m: 0.0
+  sim_dt_s: 0.002
+  control_dt_s: 0.05          # 20 Hz policy
+  action_scale_rad: 0.05      # Max joint-target change per step for the 5 arm joints
+
+reach:
+  # Reachable-goal filter (general/reachability.py)
+  workspace_min_m: [0.08, -0.32, 0.0]
+  workspace_max_m: [0.44, 0.32, 0.24]
+  voxel_m: 0.02               # Reachability map resolution
+  approach_tilt_deg: [0, 30, 60, 90]   # 0 = top-down; > 0 = tilted away from the base, in the radial plane
+  pos_tol_m: 0.005
+  ang_tol_deg: 5.0
+  jaw_clearance_m: 0.005      # Opening margin on each side of the object
+  min_grasp_z_m: 0.008        # Lowest grasp point above the table
+  table_penetration_m: 0.003  # Allowed robot-table penetration in the collision check
+
+objects:
+  # Sim task objects. TODO: replace with the real task objects (measure sizes and masses).
+  cube: {kind: box, half_m: [0.015, 0.015, 0.015], mass_kg: 0.03}
+  bar: {kind: box, half_m: [0.035, 0.012, 0.012], mass_kg: 0.04}
+  tube: {kind: cylinder, radius_m: 0.012, half_height_m: 0.04, mass_kg: 0.03}
+  puck: {kind: cylinder, radius_m: 0.0127, half_height_m: 0.0051, mass_kg: 0.005}
+
+env:
+  n_points: 16                # Object points per object (Dex4D: 32 or fewer is enough)
+  max_steps: 300              # 15 s at 20 Hz
+  start_min_m: [0.16, -0.16]  # Region for random object start positions (x, y)
+  start_max_m: [0.34, 0.16]
+  success_dist_m: 0.02        # Mean point distance that counts as a reached goal
+  chain_radius_m: 0.10        # Next goal within this distance of the achieved pose (Dex4D)
+  chain_yaw_rad: 0.5
+  lift_prob: 0.5              # Fraction of goals above the table
+  lift_max_m: 0.12
+  goal_tries: 30              # Resamples until a goal passes the reachable-goal filter
+
+reward:
+  # Staged dense reward (SO-101 PPO paper) plus a time penalty
+  reach: 0.5
+  grasp: 0.5
+  lift: 0.5
+  track: 2.0
+  success: 10.0
+  action_rate: 0.05
+  joint_vel: 0.001
+  time: 0.01
+
+student:
+  # Masked, noisy points for the webcam student (Dex4D masking)
+  point_noise_m: 0.005
+  plane_mask_prob: 0.5        # Remove the points behind a random plane through the object
+  drop_frac: 0.3              # Then remove this fraction of the rest
+
+curriculum:
+  # Failure-guided curriculum (general/curriculum.py): score = feasibility + w_div * diversity + w_fail * closeness
+  w_diversity: 0.1            # ATR
+  w_failure: 1.0              # This project's extension
+  uniform_frac: 0.1           # ATR: guards against collapse
+  temperature: 0.1
+  knn: 8
+  failure_sigma: 0.5          # Closeness = exp(-d^2 / (2 sigma^2)) in task-vector units
+  variation_m: 0.03           # Position noise when a failure is rebuilt with variations
+  variation_yaw_rad: 0.3
+  pool_size: 256

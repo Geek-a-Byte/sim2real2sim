@@ -1,0 +1,116 @@
+"""Train the privileged PPO teacher on the goal-conditioned env, with one of the three curricula.
+
+    python -m src.slingpuck.general.train_teacher --curriculum uniform --timesteps 2000000
+    python -m src.slingpuck.general.train_teacher --curriculum atr
+    python -m src.slingpuck.general.train_teacher --curriculum failure --failures logs/real/trials.jsonl
+
+Writes logs/general/<run_id>/: run_config.yaml, checkpoints, final_model.zip and sim_trials.jsonl (every
+training episode as a trial record). The curriculum gets the episode results after each rollout and
+gives the envs a new task pool. Use --resume to continue from a model (the next real2sim round).
+"""
+import argparse
+from datetime import datetime
+
+from stable_baselines3.common.callbacks import BaseCallback
+
+from src.slingpuck.config import REPO_ROOT, save_run_config
+from src.slingpuck.general.common import load_general_config, objects_from_config
+from src.slingpuck.general.curriculum import MODES, Curriculum
+from src.slingpuck.general.failures import load_jsonl, record_from_info, save_jsonl
+from src.slingpuck.general.goal_env import GoalEnv, TaskSpec
+from src.slingpuck.general.reachability import ReachabilityChecker, load_or_build_map
+
+
+class CurriculumCallback(BaseCallback):
+    """Feeds finished episodes to the curriculum and gives the envs a new task pool after each rollout."""
+
+    def __init__(self, curriculum: Curriculum, trials_path, pool_size: int):
+        super().__init__()
+        self.cur, self.trials_path, self.pool_size = curriculum, trials_path, pool_size
+        self.results, self.records, self.n_episodes = [], [], 0
+
+    def _on_training_start(self):
+        self.training_env.env_method("set_task_pool", self.cur.sample_pool(self.pool_size))
+
+    def _on_step(self) -> bool:
+        for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            if done:
+                self.n_episodes += 1
+                rec = record_from_info(info, f"sim-{self.n_episodes}")
+                self.results.append((TaskSpec.from_dict(info["task"]), rec.success))
+                self.records.append(rec)
+        return True
+
+    def _on_rollout_end(self):
+        if self.results:
+            n = len(self.results)
+            self.logger.record("curriculum/success_rate", sum(s for _, s in self.results) / n)
+            self.logger.record("curriculum/episodes", n)
+            self.cur.update(self.results)
+            save_jsonl(self.records, self.trials_path)
+            self.results, self.records = [], []
+        self.training_env.env_method("set_task_pool", self.cur.sample_pool(self.pool_size))
+
+
+def make_env_fn(cfg, rmap, student, objects):
+    def fn():
+        return GoalEnv(cfg, student=student, reach_map=rmap, objects=objects)
+    return fn
+
+
+def main():
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
+    from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common.utils import set_random_seed
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+
+    from src.slingpuck.general.policy import PairedPointPolicy
+
+    p = argparse.ArgumentParser()
+    p.add_argument("--curriculum", choices=MODES, default="uniform")
+    p.add_argument("--failures", help="Trial records (JSONL) with real failures, for --curriculum failure")
+    p.add_argument("--objects", nargs="*", help="Object names from configs/general.yaml (default: all)")
+    p.add_argument("--timesteps", type=int, default=2_000_000)
+    p.add_argument("--n-envs", type=int, default=8)
+    p.add_argument("--subproc", action="store_true")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--pool-size", type=int)
+    p.add_argument("--resume", help="final_model.zip to continue from")
+    args = p.parse_args()
+
+    cfg = load_general_config()
+    set_random_seed(args.seed)
+    rmap = load_or_build_map(cfg, verbose=True)
+    shapes = objects_from_config(cfg)
+    failures = load_jsonl(args.failures) if args.failures else []
+    if args.curriculum == "failure" and not failures:
+        raise SystemExit("--curriculum failure needs --failures with at least one policy failure")
+    cur = Curriculum(cfg, ReachabilityChecker(cfg, rmap), shapes, args.curriculum, failures, args.objects, args.seed)
+
+    run_id = f"teacher_{args.curriculum}_s{args.seed}_{datetime.now():%Y%m%d_%H%M%S}"
+    run_dir = REPO_ROOT / "logs" / "general" / run_id
+    save_run_config({**cfg, "train": vars(args)}, run_dir, seed=args.seed)
+    env = make_vec_env(make_env_fn(cfg, rmap, False, args.objects), n_envs=args.n_envs, seed=args.seed,
+                       vec_env_cls=SubprocVecEnv if args.subproc else DummyVecEnv)
+    if args.resume:
+        model = PPO.load(args.resume, env=env, custom_objects={"policy_class": PairedPointPolicy})
+    else:
+        model = PPO(PairedPointPolicy, env, n_steps=512, batch_size=1024, n_epochs=5, gamma=0.99,
+                    learning_rate=3e-4, ent_coef=0.0, seed=args.seed, verbose=0,
+                    policy_kwargs={"net_arch": [256, 256]},
+                    tensorboard_log=str(REPO_ROOT / "tensorboard_logs" / "general"))
+    callbacks = CallbackList([
+        CurriculumCallback(cur, run_dir / "sim_trials.jsonl", args.pool_size or cfg["curriculum"]["pool_size"]),
+        CheckpointCallback(save_freq=max(200_000 // args.n_envs, 1), save_path=str(run_dir), name_prefix="model"),
+    ])
+    print(f"Training {run_id}")
+    model.learn(total_timesteps=args.timesteps, callback=callbacks, tb_log_name=run_id,
+                reset_num_timesteps=not args.resume)
+    model.save(run_dir / "final_model")
+    env.close()
+    print(f"Saved {run_dir / 'final_model.zip'}")
+
+
+if __name__ == "__main__":
+    main()
