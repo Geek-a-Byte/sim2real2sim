@@ -145,7 +145,7 @@ def main():
 
     cfg = load_general_config()
     env = GoalEnv(cfg, student=args.student, reach_map=load_or_build_map(cfg), objects=args.object,
-                  render_mode="rgb_array", grasped_start_prob=0.0)
+                  render_mode="rgb_array", grasped_start_prob=0.0, pregrasp_start_prob=0.0)
     model = None
     if args.model:
         from stable_baselines3 import PPO

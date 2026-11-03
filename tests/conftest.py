@@ -10,10 +10,12 @@ def cfg():
 
 @pytest.fixture(scope="session")
 def gcfg():
-    """configs/general.yaml with a coarse reachability map (fast to build)."""
+    """configs/general.yaml with a coarse reachability map (fast to build), and no assisted starts unless a test
+    asks for them (grasped_start_prob / pregrasp_start_prob arguments)."""
     from src.slingpuck.general.common import load_general_config
 
-    return load_general_config(overrides={"reach": {"voxel_m": 0.08}})
+    return load_general_config(overrides={"reach": {"voxel_m": 0.08},
+                                          "env": {"grasped_start_prob": 0.0, "pregrasp_start_prob": 0.0}})
 
 
 @pytest.fixture(scope="session")

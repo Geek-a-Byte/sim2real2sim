@@ -133,6 +133,6 @@ def test_grasped_start_records_are_marked(gcfg, reach_map):
     env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
     _, info = env.reset(seed=0)
     assert record_from_info(info, "x").notes == "grasped_start"
-    env0 = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=0.0)
+    env0 = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=0.0, pregrasp_start_prob=0.0)
     _, info0 = env0.reset(seed=0)
     assert record_from_info(info0, "y").notes == ""

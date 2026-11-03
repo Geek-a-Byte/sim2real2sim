@@ -38,7 +38,7 @@ class CurriculumCallback(BaseCallback):
                 self.n_episodes += 1
                 rec = record_from_info(info, f"sim-{self.n_episodes}")
                 self.records.append(rec)
-                if not info.get("grasped_start"):      # A grasped start is a training aid, not the task
+                if info.get("start", "normal") == "normal":   # Assisted starts are training aids, not the task
                     self.results.append((TaskSpec.from_dict(info["task"]), rec.success))
         return True
 

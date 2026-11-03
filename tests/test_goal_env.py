@@ -321,3 +321,32 @@ def test_puck_can_be_grasped_and_lifted_with_env_actions_only(gcfg, reach_map):
         to((xy[0], xy[1], 0.08), -1.0)
         lifted += env.object_pose()[0][2] > env.shape.half_height + 0.04
     assert lifted >= 3
+
+
+# ------------------------------------------------- pregrasp starts and height-based lift (after run 4)
+def test_pregrasp_starts_leave_open_jaws_around_the_object(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], pregrasp_start_prob=1.0)
+    n = closed_grasp = 0
+    for seed in range(10):
+        _, info = env.reset(seed=seed)
+        if info["start"] != "pregrasp":
+            continue
+        n += 1
+        assert not any(env._jaw_contacts())                         # Open: the policy must close
+        p, _ = env.object_pose()
+        assert np.linalg.norm(env.d.site_xpos[env.site][:2] - p[:2]) < 0.01
+        for _ in range(6):
+            env.step(np.r_[0, 0, 0, 0, 0, -1.0])
+        closed_grasp += all(env._jaw_contacts())
+    assert n >= 7 and closed_grasp >= n - 2                         # Closing there gives a grasp
+
+
+def test_lift_reward_grows_with_height(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    w = env.w
+    env.w = {**w, "reach": 0.0, "grasp": 0.0, "track": 0.0, "time": 0.0, "action_rate": 0.0, "joint_vel": 0.0}
+    _, info = env.reset(seed=1, options={"task": TaskSpec("puck", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.10, 0.0)])})
+    assert info["start"] == "grasped"
+    rewards = [env.step(np.r_[0, 0, 0.4, 0, 0, -1.0])[1] for _ in range(8)]
+    env.w = w
+    assert 0 < rewards[1] < rewards[4] <= w["lift"] + 1e-9          # Pays from the first mm, up to the full weight

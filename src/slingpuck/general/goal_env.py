@@ -20,9 +20,12 @@ action-rate, joint-velocity and time penalties. Each stage pays more than the on
 near the object (reach only) is never the best place to stay. For a lifted goal, track pays only while
 the object is grasped; a table goal can also be reached by a push.
 
-Grasped starts: with probability env.grasped_start_prob (training only), an episode starts with the object
-already grasped by a top-down IK grasp. The policy then also learns the later stages (lift, carry, place)
-before it can find a grasp by itself. info["grasped_start"] marks these episodes.
+Assisted starts (training only), a reverse curriculum over the start state:
+  grasped   (env.grasped_start_prob)  the object is already held by a top-down IK grasp: learn lift, carry, place
+  pregrasp  (env.pregrasp_start_prob) the open jaws are around the object at grasp height: learn to close
+  normal    (the rest)                the gripper starts at home: learn the approach
+info["start"] names the start; assisted starts are left out of is_success, the curriculum and the trial-log
+success rate (their records carry the start name in `notes`).
 
 Home pose: the gripper starts home_clearance_m above the tallest training object, top-down if the arm can
 reach that height, else tilted as little as possible.
@@ -87,11 +90,13 @@ class GoalEnv(gym.Env):
 
     def __init__(self, cfg: dict, student: bool = False, reach_map: ReachabilityMap | None = None,
                  objects: list[str] | None = None, render_mode: str | None = None,
-                 grasped_start_prob: float | None = None):
-        """grasped_start_prob: None = env.grasped_start_prob from the config (training); 0 for evaluation."""
+                 grasped_start_prob: float | None = None, pregrasp_start_prob: float | None = None):
+        """grasped_start_prob, pregrasp_start_prob: None = the config's value (training); 0 for evaluation."""
         super().__init__()
         self.grasped_start_prob = cfg["env"]["grasped_start_prob"] if grasped_start_prob is None \
             else grasped_start_prob
+        self.pregrasp_start_prob = cfg["env"]["pregrasp_start_prob"] if pregrasp_start_prob is None \
+            else pregrasp_start_prob
         self.cfg, self.e, self.w = cfg, cfg["env"], cfg["reward"]
         self.student = student
         self.render_mode = render_mode
@@ -192,9 +197,12 @@ class GoalEnv(gym.Env):
         self.d.qpos[self.qadr] = self.home
         self.d.ctrl[:] = self.home
         mujoco.mj_forward(self.m, self.d)
-        self.grasped_start = False
-        if self.grasped_start_prob > 0 and self.np_random.random() < self.grasped_start_prob:
-            self.grasped_start = self._start_grasped()
+        self.start = "normal"
+        u = self.np_random.random()
+        if u < self.grasped_start_prob:
+            self.start = "grasped" if self._start_assisted(closed=True) else "normal"
+        elif u < self.grasped_start_prob + self.pregrasp_start_prob:
+            self.start = "pregrasp" if self._start_assisted(closed=False) else "normal"
 
         R = self.d.site_xmat[self.site].reshape(3, 3)
         self.ee_x, self.ee_z = R[:, 0].copy(), R[:, 2].copy()     # Target gripper orientation (ee actions)
@@ -205,9 +213,10 @@ class GoalEnv(gym.Env):
         self._next_goal()
         return self._obs(), self._info()
 
-    def _start_grasped(self) -> bool:
-        """Put the arm in a top-down IK grasp around the object and close the jaws. False (and back to the home
-        pose) if there is no such grasp or the jaws do not hold the object."""
+    def _start_assisted(self, closed: bool) -> bool:
+        """Put the arm in a top-down IK grasp pose around the object. closed=True: close the jaws and require a
+        two-jaw grasp. closed=False: leave the jaws open (the policy must close them) and require that the
+        object did not move. False (and back to the home pose) if this fails."""
         pos, yaw = self.object_pose()
         cands = [c for c in self.checker.grasp_candidates(self.shape, self.checker.grasp_point(self.shape, pos), yaw)
                  if c[0] == 0 and c[3] <= self.checker.kin.max_opening]
@@ -218,12 +227,13 @@ class GoalEnv(gym.Env):
                 ok, q, *_ = kin.ik(gp, approach, jaw, q0=q0)
                 if not ok:
                     continue
-                g_open, g_close = kin.gripper_for_opening(width), kin.gripper_for_opening(max(width - 0.02, 0.004))
+                g_open = max(kin.gripper_for_opening(width), self.g_open)
                 self.d.qpos[self.qadr] = np.r_[q, g_open]
-                self.d.ctrl[:] = np.r_[q, g_close]
+                self.d.ctrl[:] = np.r_[q, self.g_closed if closed else self.g_open]
                 mujoco.mj_forward(self.m, self.d)
-                mujoco.mj_step(self.m, self.d, nstep=10 * self.n_sub)       # Close the jaws (0.5 s)
-                if all(self._jaw_contacts()):
+                mujoco.mj_step(self.m, self.d, nstep=10 * self.n_sub)       # Close (or settle) for 0.5 s
+                moved = np.linalg.norm(self.object_pose()[0][:2] - pos[:2])
+                if (all(self._jaw_contacts()) if closed else moved < 0.005 and not any(self._jaw_contacts())):
                     return True
                 break
         mujoco.mj_resetData(self.m, self.d)                                 # No grasp: normal start
@@ -372,7 +382,8 @@ class GoalEnv(gym.Env):
         w = self.w
         track_on = grasped or not lift_needed          # A lifted goal is tracked only while the object is held
         reward = (w["reach"] * (1 - np.tanh(d_reach / w["reach_scale_m"]))
-                  + w["grasp"] * grasped + w["lift"] * (lifted and lift_needed and grasped)
+                  + w["grasp"] * grasped
+                  + w["lift"] * (lift_needed and grasped) * float(np.clip((pos[2] - tz) / w["lift_full_m"], 0, 1))
                   + w["track"] * track_on * (1 - np.tanh(d_goal / 0.05))
                   - w["action_rate"] * float(np.sum((a - self.prev_action) ** 2))
                   - w["joint_vel"] * float(np.sum(self.d.qvel[self.dadr] ** 2)) - w["time"])
@@ -387,7 +398,7 @@ class GoalEnv(gym.Env):
         info = self._info(d_goal=d_goal, success=success, lift_needed=lift_needed)
         info["goal_reached_now"] = bool(success)
         if terminated or truncated:   # SB3 reads is_success from the last step: did the episode reach a goal?
-            info["is_success"] = None if self.grasped_start else self.goals_reached >= 1   # None: SB3 skips it
+            info["is_success"] = None if self.start != "normal" else self.goals_reached >= 1   # None: SB3 skips it
         if terminated:
             info["failure"] = "object_lost"
         return self._obs(), float(reward), terminated, truncated, info
@@ -442,7 +453,7 @@ class GoalEnv(gym.Env):
         return {"task": self.task.to_dict(), "goal": list(self.goal), "goal_index": self.goals_reached,
                 "goals_reached": self.goals_reached, "d_goal": d_goal, "is_success": bool(success),
                 "stage": self.stage(d_goal, lift_needed), "object_pose": [*map(float, pos), float(yaw)],
-                "grasped_start": bool(getattr(self, "grasped_start", False))}
+                "start": getattr(self, "start", "normal"), "grasped_start": getattr(self, "start", "") == "grasped"}
 
     def render(self):
         if self._renderer is None:

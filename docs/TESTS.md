@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 106 tests, about 10 s
+pytest -q                          # 108 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,7 +27,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 34 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 36 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
 | [`test_curriculum.py`](#test_curriculumpy) | 12 | General method: trial logs and curriculum |
 
@@ -38,7 +38,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | Fixture | What it gives |
 |---|---|
 | `cfg` | The merged config `load_config("v0")`. Scope: one per test session. Most tests use it |
-| `gcfg` | `configs/general.yaml` with an 8 cm reachability voxel (the real map uses 2 cm), so that the map builds in a few seconds |
+| `gcfg` | `configs/general.yaml` with an 8 cm reachability voxel (the real map uses 2 cm), so that the map builds in a few seconds, and no assisted starts unless a test asks for them |
 | `reach_map` | The coarse reachability map built from `gcfg`. Scope: one per test session |
 | `shapes` | The task objects from `gcfg` (cube, bar, tube, puck) |
 
@@ -242,6 +242,8 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_ik_does_not_depend_on_earlier_calls` | The same IK target gives bit-identical joints after an unrelated `jaw_gap` call | A leftover gripper value made seeded resets differ by 1e-15 and failed `check_env` |
 | `test_binary_gripper_closes_on_negative_and_opens_on_positive` | Any negative gripper action closes fully; any positive one opens to `gripper_open_m` (6 cm) | Run 3: with the continuous mapping the policy's gripper action stayed near 0 (half open) and dropped every grasped start |
 | `test_puck_can_be_grasped_and_lifted_with_env_actions_only` | A simple scripted controller that uses only the env's actions lifts the puck 4 cm in at least 3 of 6 positions | The task must stay possible in the policy's own action space |
+| `test_pregrasp_starts_leave_open_jaws_around_the_object` | A pregrasp start puts the open jaws around the puck (no contact, gripper within 1 cm), and closing there gives a grasp | Run 4: the policy approached with closed jaws in 100% of episodes; this start teaches when to close |
+| `test_lift_reward_grows_with_height` | While grasped, the lift reward pays from the first millimetre and grows up to its full weight | Run 4 paid only above 1 cm; the policy pushed down and never found it |
 
 ---
 
