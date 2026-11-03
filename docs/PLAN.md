@@ -1,8 +1,9 @@
 # Plan: win sling puck (branch `slingpuck`)
 
-This branch follows [slingpuck-adaptation-plan.md](slingpuck-adaptation-plan.md)
-and step 7 of the synthesis "Which ideas fit your problem: one policy for any
-task, via Sim2Real2Sim". The general any-task method is on the branch
+This branch follows [slingpuck-adaptation-plan.md](papers/slingpuck-adaptation-plan.md)
+and step 7 of the synthesis
+[synthesis-generalize-any-task-sim2real2sim.md](papers/synthesis-generalize-any-task-sim2real2sim.md).
+The notes on the 9 papers are in [papers/](papers/). The general any-task method is on the branch
 `generalized`.
 
 ## The goal: a race of rates
