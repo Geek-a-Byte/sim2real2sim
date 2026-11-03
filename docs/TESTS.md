@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 110 tests, about 10 s
+pytest -q                          # 115 tests, about 15 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -29,7 +29,8 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
 | [`test_goal_env.py`](#test_goal_envpy) | 38 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
-| [`test_curriculum.py`](#test_curriculumpy) | 12 | General method: trial logs and curriculum |
+| [`test_curriculum.py`](#test_curriculumpy) | 12 |
+| [`test_expert.py`](#test_expertpy) | 5 | General method: scripted expert (demos for behaviour cloning) | General method: trial logs and curriculum |
 
 ---
 
@@ -245,7 +246,7 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_progress_pays_nothing_for_holding_still` | With only the progress term on, holding the puck still pays about 0 | Runs 3–5 learned to hold still because holding paid 3 per step |
 | `test_progress_pays_for_a_lift_toward_a_lifted_goal` | Every step up toward a lifted goal pays, and the sum equals the weight times the distance gained (potential-based) | The lift is paid at once, without a separate lift term |
 | `test_reaching_a_goal_does_not_lower_the_reward` | A reached goal pays the success bonus, and the farther next goal costs no reward | With an absolute track reward, reaching a goal lowered the reward |
-| `test_returns_rank_behaviours_in_the_right_order` | Scripted episodes rank idle < hover < hold still < carry to goals (even with a drop at the end) | The property that each failed run broke; checked before any training |
+| `test_returns_rank_behaviours_in_the_right_order` | Over 4 seeds, mean returns rank idle < hover < hold still < the scripted expert | The property that each failed run broke; checked before any training |
 
 ---
 
@@ -278,6 +279,19 @@ Code under test: `src/slingpuck/general/failures.py`, `src/slingpuck/general/cur
 | `test_evaluate_writes_one_valid_record_per_episode` | `evaluate.run` writes one record per episode: a goal at the start is a success, an unreached goal is a `reach` failure with that goal | The evaluation output is the input of the real2sim loop |
 | `test_curriculum_callback_feeds_results_and_sets_the_pool` | During a short PPO run, every env gets a task pool from the curriculum, and every finished episode goes to the curriculum history and to the trial log | The loop between training and the curriculum |
 | `test_grasped_start_records_are_marked` | A grasped-start episode's trial record has `notes: grasped_start`; a normal one has no note | Grasped starts are a training aid; the curriculum and the analysis must be able to leave them out |
+
+---
+
+## `test_expert.py`
+
+Code under test: `src/slingpuck/general/expert.py`. Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_expert_reaches_goals` (puck, cube) | With the coarse test map, the expert reaches a goal in at least 3 of 10 puck episodes and 6 of 10 cube episodes (with the real 2 cm map: puck 95%) | The demos for behaviour cloning come from the expert |
+| `test_expert_acts_through_the_policy_action_space` | Every expert action is 6 values in [-1, 1] | The policy can copy only actions in its own action space |
+| `test_expert_starts_in_the_right_phase` | Grasped start: carry; pregrasp start: close; normal start: approach | The expert must continue from an assisted start |
+| `test_recorded_demos_pair_observations_with_clean_actions` | Recorded demos have one observation per action, and the gripper commands are clean (open or close) even with execution noise | DART: train on the clean expert action from the noisy states |
 
 ---
 

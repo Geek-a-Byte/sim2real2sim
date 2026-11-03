@@ -130,15 +130,19 @@ class GoalEnv(gym.Env):
         w.add_light(name="overhead", pos=[0, 0, 1.0], dir=[0, 0, -1], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL)
         w.add_camera(name="overview", pos=[0.55, -0.45, 0.35],      # Looks at (0.25, 0, 0.03)
                      xyaxes=[0.832, 0.555, 0, -0.283, 0.423, 0.860])
-        for name, s in self.shapes.items():   # One body per object; unused objects wait far away
+        # One body per training object (objects=...), the others wait far away. Only the training objects are
+        # built: each resting object costs contact work every step. condim 6: the torsional and rolling
+        # friction act (with the default condim 3 a puck on its edge rolled away like a coin)
+        for name in self.object_names:
+            s = self.shapes[name]
             b = w.add_body(name=f"obj_{name}", pos=[2.0, 0, s.half_height])
             b.add_freejoint(name=f"obj_{name}")
             if s.kind == "box":
                 b.add_geom(name=f"obj_{name}", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(s.half), mass=s.mass_kg,
-                           rgba=[0.15, 0.45, 0.85, 1], friction=[1.0, 0.005, 0.0001])
+                           rgba=[0.15, 0.45, 0.85, 1], friction=[1.0, 0.005, 0.0001], condim=6)
             else:
                 b.add_geom(name=f"obj_{name}", type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[s.half[0], s.half[2], 0],
-                           mass=s.mass_kg, rgba=[0.15, 0.45, 0.85, 1], friction=[1.0, 0.005, 0.0001])
+                           mass=s.mass_kg, rgba=[0.15, 0.45, 0.85, 1], friction=[1.0, 0.005, 0.0001], condim=6)
             g = w.add_body(name=f"goal_{name}", mocap=True, pos=[2.0, 0.5, s.half_height])
             gtype = mujoco.mjtGeom.mjGEOM_BOX if s.kind == "box" else mujoco.mjtGeom.mjGEOM_CYLINDER
             size = list(s.half) if s.kind == "box" else [s.half[0], s.half[2], 0]
@@ -190,8 +194,10 @@ class GoalEnv(gym.Env):
         self.points_local = self.local_points[self.task.obj]
 
         mujoco.mj_resetData(self.m, self.d)
-        for name in self.shapes:     # Park the other objects
-            self._set_object(name, (2.0 + 0.2 * list(self.shapes).index(name), 0.0, self.shapes[name].half_height),
+        if self.task.obj not in self.object_names:
+            raise ValueError(f"Task object {self.task.obj!r} is not in this env's objects {self.object_names}")
+        for name in self.object_names:     # Park the other objects
+            self._set_object(name, (2.0 + 0.2 * self.object_names.index(name), 0.0, self.shapes[name].half_height),
                              0.0)
         z0 = self.cfg["robot"]["table_z_m"] + self.shape.half_height
         self._set_object(self.task.obj, (*self.task.start_xy, z0), self.task.start_yaw)
@@ -239,8 +245,8 @@ class GoalEnv(gym.Env):
                     return True
                 break
         mujoco.mj_resetData(self.m, self.d)                                 # No grasp: normal start
-        for name in self.shapes:
-            self._set_object(name, (2.0 + 0.2 * list(self.shapes).index(name), 0.0, self.shapes[name].half_height),
+        for name in self.object_names:
+            self._set_object(name, (2.0 + 0.2 * self.object_names.index(name), 0.0, self.shapes[name].half_height),
                              0.0)
         self._set_object(self.task.obj, (*self.task.start_xy, self.cfg["robot"]["table_z_m"] + self.shape.half_height),
                          self.task.start_yaw)
@@ -261,6 +267,9 @@ class GoalEnv(gym.Env):
         raise RuntimeError(f"No reachable start pose for {name!r} in env.start_min_m / start_max_m")
 
     def _reachable(self, shape, pos, yaw) -> bool:
+        """For starts and goals: the reachable-goal filter, and no farther than env.max_radius_m from the base."""
+        if not self.e["min_radius_m"] <= np.hypot(pos[0], pos[1]) <= self.e["max_radius_m"]:
+            return False
         return self.checker.check(shape, pos, yaw, exact=self.checker.map is None).ok
 
     def sample_goal_near(self, pos, yaw):

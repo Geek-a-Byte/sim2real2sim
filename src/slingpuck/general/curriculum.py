@@ -57,6 +57,9 @@ class Curriculum:
     def reachable(self, task: TaskSpec) -> bool:
         s = self.shapes[task.obj]
         z0 = self.cfg["robot"]["table_z_m"] + s.half_height
+        r_lo, r_hi = self.e["min_radius_m"], self.e["max_radius_m"]
+        if not all(r_lo <= np.hypot(x, y) <= r_hi for x, y in [task.start_xy, *[g[:2] for g in task.goals]]):
+            return False
         ok = self.checker.check(s, (*task.start_xy, z0), task.start_yaw, exact=self.exact).ok
         return ok and all(self.checker.check(s, g[:3], g[3], exact=self.exact).ok for g in task.goals)
 

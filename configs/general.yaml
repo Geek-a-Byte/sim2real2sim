@@ -46,6 +46,10 @@ env:
   max_steps: 300              # 15 s at 20 Hz
   start_min_m: [0.16, -0.16]  # Region for random object start positions (x, y)
   start_max_m: [0.34, 0.16]
+  min_radius_m: 0.15          # ... and at least this far: a puck dropped 8-13 cm from the base was out of reach
+  max_radius_m: 0.30          # Starts and goals at most this far from the base. The table reach falls off
+                              # from 32 cm (100%) to 34 cm (60%) and 38 cm (4%); at the edge a nudged object
+                              # left the reach and the episode ended (about 60% of expert episodes)
   success_dist_m: 0.02        # Mean point distance that counts as a reached goal
   chain_radius_m: 0.10        # Next goal within this distance of the achieved pose (Dex4D)
   chain_yaw_rad: 0.5

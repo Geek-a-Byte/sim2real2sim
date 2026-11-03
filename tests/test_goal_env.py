@@ -371,31 +371,30 @@ def test_reaching_a_goal_does_not_lower_the_reward(gcfg, reach_map):
 
 
 def test_returns_rank_behaviours_in_the_right_order(gcfg, reach_map):
-    """The reward must rank idle < hover < hold still < carry to goals (runs 2-5 each broke this order)."""
-    task = TaskSpec("puck", (0.25, 0.0), 0.0, [(0.28, 0.04, 0.06, 0.0)])
+    """The reward must rank idle < hover < hold still < the scripted expert (runs 2-5 each broke this order)."""
+    from src.slingpuck.general.expert import ScriptedExpert
 
-    def episode(start, policy, n=150):
+    def episode(start, policy, seed, n=150):
         env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"],
                       grasped_start_prob=1.0 if start == "grasped" else 0.0)
-        env.reset(seed=1, options={"task": task})
+        env.reset(seed=seed)
+        ex = ScriptedExpert(env)
         total = 0.0
         for _ in range(n):
-            _, r, te, tr, _ = env.step(policy(env))
+            _, r, te, tr, _ = env.step(policy(env, ex))
             total += r
             if te or tr:
                 break
         return total
 
-    def hover(env):
-        e = np.array([0.25, 0.0, 0.02]) - env.d.site_xpos[env.site]
+    def hover(env, ex):
+        p, _ = env.object_pose()
+        e = np.array([p[0], p[1], 0.02]) - env.d.site_xpos[env.site]
         return np.r_[np.clip(e / 0.01, -1, 1), 0, 0, 0.3]
 
-    def carry(env):
-        e = np.array(env.goal[:3]) - env.object_pose()[0]
-        return np.r_[np.clip(e / 0.01, -1, 1), 0, 0, -1.0] if np.linalg.norm(e) > 0.003 else np.r_[0, 0, 0, 0, 0, -1.0]
-
-    idle = episode("normal", lambda env: np.zeros(6))
-    hov = episode("normal", hover)
-    hold = episode("grasped", lambda env: np.r_[0, 0, 0, 0, 0, -1.0])
-    car = episode("grasped", carry)
-    assert idle < hov < hold < car
+    seeds = range(4)
+    idle = np.mean([episode("normal", lambda env, ex: np.zeros(6), s) for s in seeds])
+    hov = np.mean([episode("normal", hover, s) for s in seeds])
+    hold = np.mean([episode("grasped", lambda env, ex: np.r_[0, 0, 0, 0, 0, -1.0], s) for s in seeds])
+    expert = np.mean([episode("grasped", lambda env, ex: ex.act(), s) for s in seeds])
+    assert idle < hov < hold < expert
