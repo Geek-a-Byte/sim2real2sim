@@ -47,7 +47,7 @@ Each milestone stops for review.
 | Milestone | Content |
 |---|---|
 | G1. Reachable-goal filter | One check: is an object goal pose achievable by the SO-101? (a) IK finds the grasp pose within the joint limits, with no collision. (b) The wrist roll and pitch are inside the 5-DoF range. (c) The gripper opens wide enough for the object. Precompute a reachability map (a voxel grid of feasible grasp orientations) so that the check is fast |
-| G2. Goal-conditioned sim env | MuJoCo env with objects, AP2AP goals that pass the filter, chained goals, staged reward |
+| G2. Goal-conditioned sim env | MuJoCo env with objects, AP2AP goals that pass the filter, chained goals, staged reward. Include the sling puck skills as goals (PICK, SEAT, DRAW(aim, pull), BLOCK(x), HOLD), with a time penalty. The `slingpuck` branch uses them in its layer 1 |
 | G3. PPO teacher | Privileged teacher with paired-point goals and scene tokens. Needs a parallel sim (see the open questions) |
 | G4. Webcam student | DAgger distillation with masked, noisy points from one RGB camera. 3-D scale from the known object size |
 | G5. Task from a human demo | Human video → CoTracker3 point tracks → a rigid transform per step → a goal sequence, through the filter |
@@ -77,5 +77,6 @@ not on demos.
 - **Task set.** Which tasks and objects to start with (the synthesis names
   tube to rack, pushing and puzzles).
 - **Camera.** The webcam model, its position, and its frame rate.
-- The `papers/` folder and `slingpuck-adaptation-plan.md` that the synthesis
-  names are not in the repository.
+- The `papers/` folder that the synthesis names is not in the repository.
+  The sling puck adaptation plan is in `docs/slingpuck-adaptation-plan.md` on
+  the `slingpuck` branch.
