@@ -92,7 +92,6 @@ configs/
   env.yaml                 Sim timing, opponent, match timings and primitives, scoring
 assets/
   mujoco/robotstudio_so101/  SO-101 MuJoCo model (RobotStudio MJCF, STS3215 actuators)
-  urdf/so101.urdf          SO-101 URDF (not used)
 src/slingpuck/
   config.py                Config loader, params versioning, placeholders, strict mode, run records
   so101_slingpuck.py       The full scene (table, board, bands, robot, 10 pucks): viewer, --save, --no-viewer
@@ -118,6 +117,7 @@ src/slingpuck/
     view_mujoco_match.py   3D MuJoCo match viewer (cameras: overview, opponent)
   deploy/                  ONNX export and latency benchmark of a selector (M5)
 tests/                     pytest suite
+docs/TESTS.md              What each test checks, and why
 docs/figures/              Figures used in this README
 logs/, tensorboard_logs/, results/   Training runs and eval outputs (not in git)
 ```
@@ -302,7 +302,8 @@ opponent as aiming in more than 98% of pull/hold frames (tested).
    miss protects only one of the ~2.5 shots that come during a sling.
 3. **Under the "first empty side wins" rule, the match is a throughput race.**
    With the robot timings scaled ×0.5 (sling-and-return cycle 1.6 s), every
-   strategy wins 100%. At the default 3.1 s, greedy slinging beats every
+   strategy that slings wins 100%. `always_block` never slings, so it still ends
+   every match on time (0% wins). At the default 3.1 s, greedy slinging beats every
    defensive rule. Strategy is important only in a narrow band, where the
    robot's sling rate is close to the opponent's threat rate.
 
@@ -351,6 +352,8 @@ scripted plan is physically possible with the SO-101 and the real board sizes.
 ```bash
 pytest -q
 ```
+
+[docs/TESTS.md](docs/TESTS.md) describes each test. The table below is a summary.
 
 | File | What it checks |
 |---|---|
