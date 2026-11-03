@@ -1,5 +1,12 @@
 # slingpuck
 
+> **Branch `generalized`:** this branch is for the general method: one
+> goal-conditioned policy for any manipulation task on the SO-101, improved
+> with real failures (Sim2Real2Sim). The plan is in [docs/PLAN.md](docs/PLAN.md).
+> No code for it exists yet. The sling puck code below is the starting point.
+> It becomes the dynamic-task example (step 7 of the plan). The sling puck task
+> itself continues on the branch `slingpuck`.
+
 An **SO-101 arm** (6-DOF, LeRobot-compatible, Feetech STS3215 servos) plays
 tabletop **sling puck** against a human, on a **moopok Fast Sling Puck board,
 size M**. Deployment inference must run on a Jetson Orin Nano.
