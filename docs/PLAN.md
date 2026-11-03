@@ -63,6 +63,9 @@ Each milestone stops for review.
 
 ```bash
 python -m src.slingpuck.general.reachability                      # build cache/reach_map.npz (a few minutes, once)
+mjpython -m src.slingpuck.general.view                            # live 3D window: scripted IK pick-and-place
+mjpython -m src.slingpuck.general.view --model logs/general/<run>/final_model.zip   # a trained policy
+python -m src.slingpuck.general.view --save goal.gif --episodes 2   # GIF instead of a window
 python -m src.slingpuck.general.train_teacher --curriculum uniform --timesteps 2000000      # (A)
 python -m src.slingpuck.general.train_teacher --curriculum atr --timesteps 2000000          # (B)
 python -m src.slingpuck.general.evaluate --model logs/general/<run>/final_model.zip --episodes 100

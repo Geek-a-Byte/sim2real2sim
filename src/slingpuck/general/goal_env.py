@@ -84,7 +84,8 @@ class GoalEnv(gym.Env):
         w.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1, 1, 0.01], pos=[0, 0, tz],
                    rgba=[0.42, 0.40, 0.37, 1])
         w.add_light(name="overhead", pos=[0, 0, 1.0], dir=[0, 0, -1], type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL)
-        w.add_camera(name="overview", pos=[0.75, -0.55, 0.55], xyaxes=[0.6, 0.8, 0, -0.35, 0.26, 0.9])
+        w.add_camera(name="overview", pos=[0.55, -0.45, 0.35],      # Looks at (0.25, 0, 0.03)
+                     xyaxes=[0.832, 0.555, 0, -0.283, 0.423, 0.860])
         for name, s in self.shapes.items():   # One body per object; unused objects wait far away
             b = w.add_body(name=f"obj_{name}", pos=[2.0, 0, s.half_height])
             b.add_freejoint(name=f"obj_{name}")
