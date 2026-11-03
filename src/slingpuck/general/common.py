@@ -52,6 +52,22 @@ class ObjectShape:
     def half_height(self) -> float:
         return self.half[2]
 
+    @property
+    def yaw_symmetry(self) -> int:
+        """Order of the shape's symmetry about z: 0 = any angle (cylinder), 4 = square box, 2 = other box."""
+        if self.kind == "cylinder":
+            return 0
+        return 4 if np.isclose(self.half[0], self.half[1]) else 2
+
+    def equivalent_yaw(self, goal_yaw: float, current_yaw: float) -> float:
+        """The goal yaw that gives the same physical pose and is nearest to the current yaw."""
+        n = self.yaw_symmetry
+        if n == 0:
+            return float(current_yaw)
+        step = 2 * np.pi / n
+        k = np.round((current_yaw - goal_yaw) / step)
+        return float(wrap_angle(goal_yaw + k * step))
+
     def width_along(self, u_xy, yaw: float) -> float:
         """Object width along the horizontal unit vector u_xy (world), for an object at this yaw."""
         u = np.asarray(u_xy, float)[:2]

@@ -86,3 +86,41 @@ def test_uniform_fraction_keeps_every_candidate_possible(gcfg, shapes, fast_chec
     V = np.zeros((4, len(task_vector(cur.random_task(), cur.names))))
     assert np.all(np.isfinite(cur.score(V)))
     assert gcfg["curriculum"]["uniform_frac"] > 0
+
+
+# ------------------------------------------------------------------- evaluation and training loop
+def test_evaluate_writes_one_valid_record_per_episode(gcfg, reach_map, tmp_path):
+    from src.slingpuck.general.evaluate import run
+    from src.slingpuck.general.goal_env import GoalEnv
+
+    class Still:
+        def predict(self, obs, deterministic=True):
+            return np.zeros(6), None
+
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.e = {**env.e, "max_steps": 20}
+    tasks = [TaskSpec("cube", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.015, 0.0)]),     # Reached at once
+             TaskSpec("bar", (0.25, 0.05), 0.0, [(0.30, 0.05, 0.012, 0.0)])]      # Never reached
+    recs = run(Still(), env, 2, tasks)
+    assert [r.success for r in recs] == [True, False]
+    assert recs[1].stage == "reach" and recs[1].goal[:2] == [0.30, 0.05]
+    save_jsonl(recs, tmp_path / "e.jsonl", append=False)
+    assert len(load_jsonl(tmp_path / "e.jsonl")) == 2
+
+
+def test_curriculum_callback_feeds_results_and_sets_the_pool(gcfg, shapes, reach_map, tmp_path):
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.env_util import make_vec_env
+
+    from src.slingpuck.general.policy import PairedPointPolicy
+    from src.slingpuck.general.train_teacher import CurriculumCallback, make_env_fn
+
+    cfg = {**gcfg, "env": {**gcfg["env"], "max_steps": 16}}
+    cur = Curriculum(cfg, ReachabilityChecker(cfg, reach_map), shapes, "failure", [failure()], seed=0)
+    env = make_vec_env(make_env_fn(cfg, reach_map, False, None), n_envs=2, seed=0)
+    model = PPO(PairedPointPolicy, env, n_steps=32, batch_size=32, n_epochs=1, seed=0)
+    cb = CurriculumCallback(cur, tmp_path / "t.jsonl", pool_size=8)
+    model.learn(64, callback=cb)
+    pools = env.get_attr("task_pool")
+    assert all(p is not None and len(p) == 8 for p in pools)
+    assert len(cur.hist_vecs) >= 4 and len(load_jsonl(tmp_path / "t.jsonl")) == len(cur.hist_vecs)

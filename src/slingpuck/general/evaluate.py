@@ -18,6 +18,7 @@ from src.slingpuck.eval.stats import wilson_ci
 from src.slingpuck.general.common import load_general_config, objects_from_config
 from src.slingpuck.general.failures import record_from_info, save_jsonl, summarize, tag_unreachable
 from src.slingpuck.general.goal_env import GoalEnv, TaskSpec
+from src.slingpuck.general.reachability import load_or_build_map
 
 
 def load_tasks(path) -> list[TaskSpec]:
@@ -61,7 +62,7 @@ def main():
 
     cfg = load_general_config()
     model = PPO.load(args.model, custom_objects={"policy_class": PairedPointPolicy})
-    env = GoalEnv(cfg, student=args.student)
+    env = GoalEnv(cfg, student=args.student, reach_map=load_or_build_map(cfg))   # Same goal filter as training
     tasks = load_tasks(args.tasks) if args.tasks else None
     records = run(model, env, args.episodes, tasks, args.seed)
     save_jsonl(records, args.out, append=False)

@@ -11,8 +11,14 @@ Observation (Dict):
   privileged  (23,)          object pose and velocity, goal, jaw contacts, gripper site (critic / teacher only)
 Action: 6 values in [-1, 1]: arm joint-target changes (x action_scale_rad) and the gripper target.
 
-Reward (staged, SO-101 PPO paper): reach + grasp + lift + track + success bonus, minus action-rate,
-joint-velocity and time penalties.
+Reward (staged, SO-101 PPO paper): reach + grasp + lift (while grasped) + track + success bonus, minus
+action-rate, joint-velocity and time penalties.
+
+Symmetric objects: the goal yaw is replaced by the equivalent yaw nearest to the object's yaw (a cube turned
+90 deg, a bar turned 180 deg, a cylinder at any yaw is the same pose), so the point distance measures the pose.
+
+The episode ends (terminated, failure "object_lost") when the object leaves the workspace, or lies on the
+table at a pose that fails the reachable-goal filter. It is truncated when no reachable next goal exists.
 
 reset(options={"task": TaskSpec}) starts a given task (the curriculum and rebuilt real failures use it).
 """
@@ -106,8 +112,12 @@ class GoalEnv(gym.Env):
         self.dadr = np.array([self.m.joint(n).dofadr[0] for n in (*ARM_JOINTS, "gripper")])
         self.ctrl_lo, self.ctrl_hi = self.m.actuator_ctrlrange[:, 0].copy(), self.m.actuator_ctrlrange[:, 1].copy()
         self.site = self.m.site("gripperframe").id
-        self.jaw_geoms = (self.m.geom("fixed_jaw_box1").id, self.m.geom("moving_jaw_box1").id)
-        self.jaw_bodies = (self.m.geom_bodyid[self.jaw_geoms[0]], self.m.geom_bodyid[self.jaw_geoms[1]])
+        jaw_bodies = (self.m.geom_bodyid[self.m.geom("fixed_jaw_box1").id],
+                      self.m.geom_bodyid[self.m.geom("moving_jaw_box1").id])
+        # Jaw collision geoms (priority 1); the gripper body also holds the wrist motor box, which is not a jaw
+        self.jaw_geoms = tuple(frozenset(g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == b
+                                         and self.m.geom_priority[g] == 1 and self.m.geom_contype[g])
+                               for b in jaw_bodies)
         kin = self.checker.kin
         for q0 in SEED_POSES:
             ok, q, *_ = kin.ik(HOME_GRASP_POINT, approach_dir(HOME_GRASP_POINT, 0.0), None, q0=q0)
@@ -156,35 +166,46 @@ class GoalEnv(gym.Env):
         name = self.object_names[int(self.np_random.integers(len(self.object_names)))]
         shape = self.shapes[name]
         z0 = self.cfg["robot"]["table_z_m"] + shape.half_height
-        for _ in range(self.e["goal_tries"]):
+        for _ in range(10 * self.e["goal_tries"]):
             xy, yaw = self.np_random.uniform(lo, hi), float(self.np_random.uniform(-np.pi, np.pi))
             if self._reachable(shape, (*xy, z0), yaw):
-                break
-        return TaskSpec(name, tuple(float(v) for v in xy), yaw)
+                return TaskSpec(name, tuple(float(v) for v in xy), yaw)
+        raise RuntimeError(f"No reachable start pose for {name!r} in env.start_min_m / start_max_m")
 
     def _reachable(self, shape, pos, yaw) -> bool:
         return self.checker.check(shape, pos, yaw, exact=self.checker.map is None).ok
 
     def sample_goal_near(self, pos, yaw):
-        """Next goal near the achieved pose: on the table or lifted, reachable."""
+        """Next goal near the achieved pose: on the table or lifted, reachable. If there is none (the object
+        is near the edge of the reach), a reachable goal anywhere in the start region. None if neither exists.
+        The current pose is never a fallback: it would count as reached on every step."""
         tz = self.cfg["robot"]["table_z_m"] + self.shape.half_height
-        for _ in range(self.e["goal_tries"]):
-            a = self.np_random.uniform(0, 2 * np.pi)
-            r = self.e["chain_radius_m"] * np.sqrt(self.np_random.random())
-            x, y = pos[0] + r * np.cos(a), pos[1] + r * np.sin(a)
+        lo, hi = np.array(self.e["start_min_m"]), np.array(self.e["start_max_m"])
+        for k in range(2 * self.e["goal_tries"]):
+            if k < self.e["goal_tries"]:
+                a = self.np_random.uniform(0, 2 * np.pi)
+                r = self.e["chain_radius_m"] * np.sqrt(self.np_random.random())
+                x, y = pos[0] + r * np.cos(a), pos[1] + r * np.sin(a)
+            else:
+                x, y = self.np_random.uniform(lo, hi)
             z = tz + (self.np_random.uniform(0.02, self.e["lift_max_m"]) if self.np_random.random() < self.e["lift_prob"]
                       else 0.0)
             g_yaw = float(wrap_angle(yaw + self.np_random.uniform(-1, 1) * self.e["chain_yaw_rad"]))
             if self._reachable(self.shape, (x, y, z), g_yaw):
                 return (float(x), float(y), float(z), g_yaw)
-        return (float(pos[0]), float(pos[1]), float(tz), float(yaw))   # Fallback: hold the current pose
+        return None
 
     def _next_goal(self):
+        p, yaw = self.object_pose()
+        self.no_goal = False
         if self.goal_queue:
-            self.goal = tuple(self.goal_queue.pop(0))
+            goal = tuple(self.goal_queue.pop(0))
         else:
-            p, yaw = self.object_pose()
-            self.goal = self.sample_goal_near(p, yaw)
+            goal = self.sample_goal_near(p, yaw)
+        if goal is None:          # Keep the old goal for the observation; step() truncates the episode
+            self.no_goal = True
+            goal = self.goal if self.goal is not None else (float(p[0]), float(p[1]) + 1.0, float(p[2]), float(yaw))
+        self.goal = (*goal[:3], self.shape.equivalent_yaw(goal[3], yaw))
         self.goal_steps, self.goal_contact, self.goal_lifted = 0, False, False
         mid = self.m.body(f"goal_{self.task.obj}").mocapid[0]
         self.d.mocap_pos[mid] = self.goal[:3]
@@ -212,13 +233,13 @@ class GoalEnv(gym.Env):
         return self.points_local @ yaw_matrix(self.goal[3]).T + np.asarray(self.goal[:3])
 
     def _jaw_contacts(self):
-        obj = self.m.body(f"obj_{self.task.obj}").id
+        obj = self.m.geom(f"obj_{self.task.obj}").id
         touch = [False, False]
         for i in range(self.d.ncon):
             c = self.d.contact[i]
-            b1, b2 = self.m.geom_bodyid[c.geom1], self.m.geom_bodyid[c.geom2]
-            for k, jb in enumerate(self.jaw_bodies):
-                if {b1, b2} == {jb, obj}:
+            other = c.geom2 if c.geom1 == obj else c.geom1 if c.geom2 == obj else None
+            for k, geoms in enumerate(self.jaw_geoms):
+                if other in geoms:
                     touch[k] = True
         return touch
 
@@ -246,24 +267,31 @@ class GoalEnv(gym.Env):
 
         w = self.w
         reward = (w["reach"] * (1 - np.tanh(d_reach / 0.1)) + w["grasp"] * grasped
-                  + w["lift"] * (lifted and lift_needed) + w["track"] * (1 - np.tanh(d_goal / 0.05))
+                  + w["lift"] * (lifted and lift_needed and grasped) + w["track"] * (1 - np.tanh(d_goal / 0.05))
                   - w["action_rate"] * float(np.sum((a - self.prev_action) ** 2))
                   - w["joint_vel"] * float(np.sum(self.d.qvel[self.dadr] ** 2)) - w["time"])
         self.prev_action = a
-        success = d_goal < self.e["success_dist_m"]
+        success = d_goal < self.e["success_dist_m"] and not self.no_goal
         if success:
             reward += w["success"]
             self.goals_reached += 1
             self._next_goal()
-        lo, hi = np.array(self.cfg["reach"]["workspace_min_m"]), np.array(self.cfg["reach"]["workspace_max_m"])
-        off = pos[2] < self.cfg["robot"]["table_z_m"] - 0.05 or np.any(pos[:2] < lo[:2] - 0.1) or \
-            np.any(pos[:2] > hi[:2] + 0.1)
-        terminated = bool(off)
-        truncated = not terminated and self.steps >= self.e["max_steps"]
+        terminated = self.object_lost(pos, grasped)
+        truncated = not terminated and (self.steps >= self.e["max_steps"] or self.no_goal)
         info = self._info(d_goal=d_goal, success=success, lift_needed=lift_needed)
         if terminated:
             info["failure"] = "object_lost"
         return self._obs(), float(reward), terminated, truncated, info
+
+    def object_lost(self, pos, grasped: bool) -> bool:
+        """Out of the workspace, or resting on the table where the robot cannot grasp it."""
+        lo, hi = np.array(self.cfg["reach"]["workspace_min_m"]), np.array(self.cfg["reach"]["workspace_max_m"])
+        if np.any(pos[:2] < lo[:2] - 0.1) or np.any(pos[:2] > hi[:2] + 0.1):
+            return True
+        on_table = pos[2] < self.cfg["robot"]["table_z_m"] + self.shape.half_height + 0.005
+        if self.checker.map is not None and on_table and not grasped:
+            return not self.checker.check(self.shape, pos, self.object_pose()[1], exact=False).ok
+        return False
 
     def stage(self, d_goal: float, lift_needed: bool) -> str:
         """Where the current goal stands: the failure stage if the episode ends now."""

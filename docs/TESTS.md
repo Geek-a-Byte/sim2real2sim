@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 78 tests, about 10 s
+pytest -q                          # 89 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,9 +27,9 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 9 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 18 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
-| [`test_curriculum.py`](#test_curriculumpy) | 9 | General method: trial logs and curriculum |
+| [`test_curriculum.py`](#test_curriculumpy) | 11 | General method: trial logs and curriculum |
 
 ---
 
@@ -223,6 +223,12 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_student_points_are_masked_and_noisy` | In the student mode, masked points carry no position, and on average 20–90% of the points stay visible | The webcam student sees only part of the object |
 | `test_scripted_grasp_lifts_the_cube` | A scripted IK controller grasps the cube and lifts it above 6 cm, with both jaws in contact | The sim physics allows the grasp that the policy must learn |
 | `test_object_out_of_the_workspace_terminates` | An object pushed out of the workspace ends the episode with `failure: object_lost` | This is a logged failure stage |
+| `test_no_goal_is_ever_the_current_pose` | For 60 object positions near and past the edge of the reach, the next goal is never the current pose | A goal at the current pose counts as reached on every step: a reward exploit found in the code review |
+| `test_object_out_of_reach_ends_the_episode` | An object inside the workspace margin, but out of reach, ends the episode at once with `object_lost` | Such an episode can never succeed |
+| `test_no_reachable_next_goal_truncates_without_reward` | When no reachable next goal exists, the episode is truncated, and no success bonus comes again | The other half of the exploit fix |
+| `test_symmetric_objects_reach_turned_goals` (4 cases) | A cube turned 90°, a bar turned 180° and a tube at any yaw are at their goal. A bar turned 90° is not | Correct placements of symmetric objects must not count as failures |
+| `test_jaw_contacts_use_only_jaw_geoms` | The grasp check uses only the jaw geoms, not the wrist motor box in the same body | Otherwise a touch with the wrist counts as a grasp |
+| `test_lift_reward_needs_a_grasp` | An object in the air that is not held gets no lift reward | Otherwise knocking the object up pays |
 
 ---
 
@@ -252,6 +258,8 @@ Code under test: `src/slingpuck/general/failures.py`, `src/slingpuck/general/cur
 | `test_successes_and_unreachable_goals_do_not_steer_the_curriculum` | Success and unreachable records give no failure tasks | Only policy failures steer the curriculum |
 | `test_feasibility_follows_history_and_diversity_prefers_rare_tasks` | A task with a success history scores higher feasibility than one with failures. A task far from all trained tasks scores higher diversity | The two ATR terms |
 | `test_uniform_fraction_keeps_every_candidate_possible` | Scores are finite and the uniform fraction is above zero | ATR: 10% uniform sampling guards against collapse |
+| `test_evaluate_writes_one_valid_record_per_episode` | `evaluate.run` writes one record per episode: a goal at the start is a success, an unreached goal is a `reach` failure with that goal | The evaluation output is the input of the real2sim loop |
+| `test_curriculum_callback_feeds_results_and_sets_the_pool` | During a short PPO run, every env gets a task pool from the curriculum, and every finished episode goes to the curriculum history and to the trial log | The loop between training and the curriculum |
 
 ---
 

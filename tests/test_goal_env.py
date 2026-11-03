@@ -99,3 +99,64 @@ def test_object_out_of_the_workspace_terminates(env):
     env._set_object("cube", (0.25, 0.6, 0.015), 0.0)      # Pushed far to the side
     _, _, terminated, _, info = env.step(np.zeros(6))
     assert terminated and info["failure"] == "object_lost"
+
+
+# ------------------------------------------------------------------ regression tests (codebase review)
+def test_no_goal_is_ever_the_current_pose(gcfg, reach_map):
+    """A goal at the current pose counts as reached on every step: a reward exploit."""
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=1, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0)})
+    rng = np.random.default_rng(0)
+    for p in rng.uniform([-0.02, -0.42], [0.54, 0.42], (60, 2)):
+        env._set_object("cube", (p[0], p[1], 0.015), 0.0)
+        mujoco.mj_forward(env.m, env.d)
+        g = env.sample_goal_near(*env.object_pose())
+        assert g is None or not np.allclose(g[:2], p)
+
+
+def test_object_out_of_reach_ends_the_episode(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=1, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0)})
+    env._set_object("cube", (0.5, 0.38, 0.015), 0.0)     # Inside the workspace margin, out of reach
+    _, r, terminated, _, info = env.step(np.zeros(6))
+    assert terminated and info["failure"] == "object_lost" and r < 1.0
+
+
+def test_no_reachable_next_goal_truncates_without_reward(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.015, 0.0)])})
+    env.sample_goal_near = lambda pos, yaw: None             # As if no reachable goal existed
+    _, r1, _, truncated, info = env.step(np.zeros(6))        # Reaches the given goal; no next goal
+    assert info["goals_reached"] == 1 and truncated
+    _, r2, *_ = env.step(np.zeros(6))
+    assert r2 < env.w["success"] and env.goals_reached == 1     # No success bonus again
+
+
+@pytest.mark.parametrize("obj, turn, same", [("cube", np.pi / 2, True), ("bar", np.pi, True),
+                                             ("bar", np.pi / 2, False), ("tube", 1.3, True)])
+def test_symmetric_objects_reach_turned_goals(gcfg, reach_map, obj, turn, same):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    z = env.shapes[obj].half_height
+    _, info = env.reset(seed=0, options={"task": TaskSpec(obj, (0.25, 0.0), 0.2, [(0.25, 0.0, z, 0.2 + turn)])})
+    assert (info["d_goal"] < 1e-6) == same
+
+
+def test_jaw_contacts_use_only_jaw_geoms(env):
+    m = env.m
+    for geoms in env.jaw_geoms:
+        assert geoms and all(m.geom_priority[g] == 1 for g in geoms)
+    wrist_box = [g for g in range(m.ngeom) if m.geom_bodyid[g] == m.geom_bodyid[m.geom("fixed_jaw_box1").id]
+                 and m.geom_priority[g] == 0 and m.geom_contype[g]]
+    assert wrist_box and not set(wrist_box) & env.jaw_geoms[0]
+
+
+def test_lift_reward_needs_a_grasp(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.1), 0.0, [(0.25, 0.1, 0.08, 0.0)])})
+    env._set_object("cube", (0.25, 0.1, 0.06), 0.0)          # In the air, not held
+    mujoco.mj_forward(env.m, env.d)
+    w = dict(env.w)
+    env.w = {**w, "lift": 1000.0}
+    _, r, *_ = env.step(np.zeros(6))
+    env.w = w
+    assert r < 100.0
