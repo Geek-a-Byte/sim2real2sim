@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 97 tests, about 10 s
+pytest -q                          # 104 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,9 +27,9 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 26 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 32 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
-| [`test_curriculum.py`](#test_curriculumpy) | 11 | General method: trial logs and curriculum |
+| [`test_curriculum.py`](#test_curriculumpy) | 12 | General method: trial logs and curriculum |
 
 ---
 
@@ -234,6 +234,12 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_pushing_into_the_table_has_no_windup_and_respects_the_floor` | After a tilt to top-down and 60 steps down, the gripper is above the table and below 1.2 cm, and the joint targets stay within 0.35 rad of the joints | Low enough for a 1 cm puck; the old controller wound up 2.2 rad against the table |
 | `test_home_gripper_is_above_every_object` | At reset, the jaw tips are more than 2 cm above the tallest object | A low home pose started the gripper inside the 8 cm tube |
 | `test_is_success_at_the_episode_end_reports_reached_goals` | At the last step, `is_success` is true if the episode reached a goal, and false if not. `goal_reached_now` marks the step of each success | SB3's `rollout/success_rate` reads `is_success` from the last step only; it was always 0 before |
+| `test_home_pose_follows_the_tallest_training_object` | With pucks only, the home gripper is top-down and lower; with all objects, it is above the 8 cm tube | A low top-down start makes the first grasp much easier for a puck |
+| `test_grasped_starts_hold_the_object_through_a_lift` | With grasped starts on, at least 8 of 10 resets hold the puck, and nearly all of them lift it more than 4 cm | so101.xml's elliptic friction cones dropped the puck in 16 of 18 lifts; pyramidal cones hold it |
+| `test_a_grasp_pays_more_than_hovering` | A grasp pays more than twice the reward of hovering 2 cm above the puck with open jaws | Run 2 stayed in the hover optimum |
+| `test_lifted_goals_pay_no_track_reward_without_a_grasp` | With only the track term on, a lifted goal pays 0 while the object is not held; a table goal pays (a push can reach it) | Otherwise hovering near the object collects track reward |
+| `test_grasped_starts_are_left_out_of_the_success_rate` | At the end of a grasped-start episode, `is_success` is `None` | SB3 then leaves it out, so the success graph shows only real starts |
+| `test_ik_does_not_depend_on_earlier_calls` | The same IK target gives bit-identical joints after an unrelated `jaw_gap` call | A leftover gripper value made seeded resets differ by 1e-15 and failed `check_env` |
 
 ---
 
@@ -265,6 +271,7 @@ Code under test: `src/slingpuck/general/failures.py`, `src/slingpuck/general/cur
 | `test_uniform_fraction_keeps_every_candidate_possible` | Scores are finite and the uniform fraction is above zero | ATR: 10% uniform sampling guards against collapse |
 | `test_evaluate_writes_one_valid_record_per_episode` | `evaluate.run` writes one record per episode: a goal at the start is a success, an unreached goal is a `reach` failure with that goal | The evaluation output is the input of the real2sim loop |
 | `test_curriculum_callback_feeds_results_and_sets_the_pool` | During a short PPO run, every env gets a task pool from the curriculum, and every finished episode goes to the curriculum history and to the trial log | The loop between training and the curriculum |
+| `test_grasped_start_records_are_marked` | A grasped-start episode's trial record has `notes: grasped_start`; a normal one has no note | Grasped starts are a training aid; the curriculum and the analysis must be able to leave them out |
 
 ---
 

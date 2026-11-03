@@ -37,18 +37,21 @@ class CurriculumCallback(BaseCallback):
             if done:
                 self.n_episodes += 1
                 rec = record_from_info(info, f"sim-{self.n_episodes}")
-                self.results.append((TaskSpec.from_dict(info["task"]), rec.success))
                 self.records.append(rec)
+                if not info.get("grasped_start"):      # A grasped start is a training aid, not the task
+                    self.results.append((TaskSpec.from_dict(info["task"]), rec.success))
         return True
 
     def _on_rollout_end(self):
+        if self.records:
+            save_jsonl(self.records, self.trials_path)
+            self.records = []
         if self.results:
             n = len(self.results)
             self.logger.record("curriculum/success_rate", sum(s for _, s in self.results) / n)
             self.logger.record("curriculum/episodes", n)
             self.cur.update(self.results)
-            save_jsonl(self.records, self.trials_path)
-            self.results, self.records = [], []
+            self.results = []
         self.training_env.env_method("set_task_pool", self.cur.sample_pool(self.pool_size))
 
 

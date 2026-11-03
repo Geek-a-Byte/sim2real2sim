@@ -77,10 +77,11 @@ class SO101Kinematics:
         self._tips = (self.m.geom("fixed_jaw_sph_tip1").id, self.m.geom("moving_jaw_sph_tip1").id)
         self.max_opening = self.jaw_gap(self.gripper_range[1])
 
-    def set(self, q_arm, gripper: float | None = None):
+    def set(self, q_arm, gripper: float = 0.0):
+        """Always sets the gripper too: the jaw mass changes the Jacobian's rounding, so a leftover gripper
+        value from an earlier call would make the IK result depend on the call history."""
         self.d.qpos[self.qadr] = q_arm
-        if gripper is not None:
-            self.d.qpos[self.gripper_qadr] = gripper
+        self.d.qpos[self.gripper_qadr] = gripper
         mujoco.mj_kinematics(self.m, self.d)
         mujoco.mj_comPos(self.m, self.d)
 

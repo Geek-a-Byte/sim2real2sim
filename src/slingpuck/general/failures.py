@@ -57,7 +57,8 @@ def record_from_info(info: dict, trial_id: str, source: str = "sim", n_goals: in
     success = info["goals_reached"] >= n_goals
     stage = "success" if success else info.get("failure", info["stage"])
     return TrialRecord(trial_id, source, info["task"], int(info["goal_index"]), list(info["goal"]), stage,
-                       list(info["object_pose"]), bool(success))
+                       list(info["object_pose"]), bool(success),
+                       notes="grasped_start" if info.get("grasped_start") else "")
 
 
 def tag_unreachable(rec: TrialRecord, checker, shapes) -> TrialRecord:

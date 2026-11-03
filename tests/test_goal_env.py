@@ -217,3 +217,72 @@ def test_is_success_at_the_episode_end_reports_reached_goals(gcfg, reach_map):
     env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.35, 0.1, 0.015, 0.0)])})
     infos = [env.step(np.zeros(6))[4] for _ in range(3)]
     assert not infos[-1]["is_success"]
+
+
+# --------------------------------------------------- reward stages and grasped starts (training run 3)
+def test_home_pose_follows_the_tallest_training_object(gcfg, reach_map):
+    puck = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"])
+    allobj = GoalEnv(gcfg, reach_map=reach_map)
+    assert puck.home_tilt == 0.0 and puck.home_point[2] < allobj.home_point[2]   # Low and top-down for a puck
+    assert allobj.home_point[2] > 2 * allobj.shapes["tube"].half_height
+
+
+def test_grasped_starts_hold_the_object_through_a_lift(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    grasped = lifted = 0
+    for seed in range(10):
+        _, info = env.reset(seed=seed)
+        if not info["grasped_start"]:
+            continue
+        grasped += 1
+        for _ in range(5):
+            env.step(np.r_[0, 0, 0, 0, 0, -1.0])
+        for _ in range(10):
+            env.step(np.r_[0, 0, 1, 0, 0, -1.0])
+        lifted += env.object_pose()[0][2] > env.shape.half_height + 0.04
+    assert grasped >= 8 and lifted >= grasped - 2       # Elliptic cones (so101.xml) held 2 of 18
+
+
+def test_a_grasp_pays_more_than_hovering(gcfg, reach_map):
+    task = TaskSpec("puck", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.06, 0.0)])
+    held = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    _, info = held.reset(seed=0, options={"task": task})
+    assert info["grasped_start"]
+    r_held = np.mean([held.step(np.r_[0, 0, 0, 0, 0, -1.0])[1] for _ in range(5)])
+    hover = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=0.0)
+    hover.reset(seed=0, options={"task": task})
+    for _ in range(15):                                  # Down to 2 cm above the puck, jaws open
+        e = np.array([0.25, 0.0, 0.02]) - hover.d.site_xpos[hover.site]
+        r_hover = hover.step(np.r_[np.clip(e / 0.01, -1, 1), 0, 0, 0.3])[1]
+    assert r_held > 2 * r_hover
+
+
+def test_lifted_goals_pay_no_track_reward_without_a_grasp(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, grasped_start_prob=0.0)
+    w = env.w
+    env.w = {**w, "reach": 0.0, "time": 0.0, "action_rate": 0.0, "joint_vel": 0.0}
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.05, 0.0)])})
+    r_lifted_goal = env.step(np.zeros(6))[1]
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.27, 0.0, 0.015, 0.0)])})
+    r_table_goal = env.step(np.zeros(6))[1]
+    env.w = w
+    assert r_lifted_goal == pytest.approx(0.0, abs=1e-9) and r_table_goal > 0.1   # A push can do a table goal
+
+
+def test_grasped_starts_are_left_out_of_the_success_rate(gcfg, reach_map):
+    cfg = {**gcfg, "env": {**gcfg["env"], "max_steps": 2}}
+    env = GoalEnv(cfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    _, info = env.reset(seed=0)
+    assert info["grasped_start"]
+    info = [env.step(np.zeros(6))[4] for _ in range(2)][-1]
+    assert info["is_success"] is None                    # SB3 skips None in rollout/success_rate
+
+
+def test_ik_does_not_depend_on_earlier_calls(gcfg):
+    from src.slingpuck.general.reachability import SO101Kinematics
+    kin = SO101Kinematics()
+    target = ((0.25, 0.05, 0.03), approach_dir((0.25, 0.05, 0.03), 0.0))
+    q1 = kin.ik(*target, None)[1]
+    kin.jaw_gap(1.5)                                      # Leaves the gripper joint at 1.5 in kin.d
+    q2 = kin.ik(*target, None)[1]
+    assert np.array_equal(q1, q2)

@@ -62,7 +62,8 @@ def main():
 
     cfg = load_general_config()
     model = PPO.load(args.model, custom_objects={"policy_class": PairedPointPolicy})
-    env = GoalEnv(cfg, student=args.student, reach_map=load_or_build_map(cfg))   # Same goal filter as training
+    env = GoalEnv(cfg, student=args.student, reach_map=load_or_build_map(cfg),   # Same goal filter as training
+                  grasped_start_prob=0.0)
     tasks = load_tasks(args.tasks) if args.tasks else None
     records = run(model, env, args.episodes, tasks, args.seed)
     save_jsonl(records, args.out, append=False)

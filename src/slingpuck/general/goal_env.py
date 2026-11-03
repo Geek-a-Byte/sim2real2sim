@@ -14,8 +14,17 @@ tilt and roll (x ee_rot_step_rad), mapped to the 5 arm joints by one damped leas
 Jacobian; the last value is the gripper target. "joint": 5 arm joint-target changes (x action_scale_rad) and
 the gripper target. The gripper site never goes below min_gripper_z_m.
 
-Reward (staged, SO-101 PPO paper): reach + pregrasp (near, jaws open) + grasp + lift (while grasped) + track
-+ success bonus, minus action-rate, joint-velocity and time penalties.
+Reward (staged, SO-101 PPO paper): reach + grasp + lift (while grasped) + track + success bonus, minus
+action-rate, joint-velocity and time penalties. Each stage pays more than the one before, so hovering
+near the object (reach only) is never the best place to stay. For a lifted goal, track pays only while
+the object is grasped; a table goal can also be reached by a push.
+
+Grasped starts: with probability env.grasped_start_prob (training only), an episode starts with the object
+already grasped by a top-down IK grasp. The policy then also learns the later stages (lift, carry, place)
+before it can find a grasp by itself. info["grasped_start"] marks these episodes.
+
+Home pose: the gripper starts home_clearance_m above the tallest training object, top-down if the arm can
+reach that height, else tilted as little as possible.
 
 Symmetric objects: the goal yaw is replaced by the equivalent yaw nearest to the object's yaw (a cube turned
 90 deg, a bar turned 180 deg, a cylinder at any yaw is the same pose), so the point distance measures the pose.
@@ -38,8 +47,9 @@ from src.slingpuck.general.common import (ARM_JOINTS, SO101_XML, ObjectShape, ob
                                           quat_to_yaw, wrap_angle, yaw_matrix, yaw_quat)
 from src.slingpuck.general.reachability import SEED_POSES, ReachabilityChecker, ReachabilityMap, approach_dir
 
-HOME_GRASP_POINT = (0.20, 0.0, 0.12)    # Above the tallest object (tube top 8 cm); top-down cannot go this high,
-HOME_TILT_DEG = 15.0                    # so the home gripper is tilted 15 deg
+HOME_XY = (0.20, 0.0)
+HOME_CLEARANCE_M = 0.04                 # Home gripper height above the tallest training object
+HOME_TILTS_DEG = (0.0, 15.0, 30.0, 45.0)  # Top-down if reachable (about 8 cm high at most), else the least tilt
 ORIENT_GAIN, ORIENT_WEIGHT = 0.5, 0.02  # ee actions: orientation correction per step, and its weight (m/rad)
 WINDUP_LIMIT_RAD = 0.1                 # Max joint-target lead over the measured joint (no windup at contacts)
 STAGES = ("reach", "grasp", "transport", "place")
@@ -75,8 +85,12 @@ class GoalEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
 
     def __init__(self, cfg: dict, student: bool = False, reach_map: ReachabilityMap | None = None,
-                 objects: list[str] | None = None, render_mode: str | None = None):
+                 objects: list[str] | None = None, render_mode: str | None = None,
+                 grasped_start_prob: float | None = None):
+        """grasped_start_prob: None = env.grasped_start_prob from the config (training); 0 for evaluation."""
         super().__init__()
+        self.grasped_start_prob = cfg["env"]["grasped_start_prob"] if grasped_start_prob is None \
+            else grasped_start_prob
         self.cfg, self.e, self.w = cfg, cfg["env"], cfg["reward"]
         self.student = student
         self.render_mode = render_mode
@@ -100,6 +114,8 @@ class GoalEnv(gym.Env):
     def _build(self):
         spec = mujoco.MjSpec.from_file(str(SO101_XML))
         spec.option.timestep = self.cfg["robot"]["sim_dt_s"]
+        spec.option.impratio = self.cfg["robot"]["impratio"]     # Stable grasps (see configs/general.yaml)
+        spec.option.cone = getattr(mujoco.mjtCone, f"mjCONE_{self.cfg['robot']['friction_cone'].upper()}")
         w = spec.worldbody
         tz = self.cfg["robot"]["table_z_m"]
         w.add_geom(name="table", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[1, 1, 0.01], pos=[0, 0, tz],
@@ -133,14 +149,19 @@ class GoalEnv(gym.Env):
         self.jaw_geoms = tuple(frozenset(g for g in range(self.m.ngeom) if self.m.geom_bodyid[g] == b
                                          and self.m.geom_priority[g] == 1 and self.m.geom_contype[g])
                                for b in jaw_bodies)
+        self.home = self._home_pose()
+
+    def _home_pose(self) -> np.ndarray:
         kin = self.checker.kin
-        for q0 in SEED_POSES:
-            ok, q, *_ = kin.ik(HOME_GRASP_POINT, approach_dir(HOME_GRASP_POINT, HOME_TILT_DEG), None, q0=q0)
-            if ok:
-                break
-        if not ok:
-            raise RuntimeError(f"No IK solution for the home grasp point {HOME_GRASP_POINT}")
-        self.home = np.concatenate([q, [0.8]])
+        top = max(2 * self.shapes[n].half_height for n in self.object_names)
+        p = (*HOME_XY, self.cfg["robot"]["table_z_m"] + top + HOME_CLEARANCE_M)
+        for tilt in HOME_TILTS_DEG:
+            for q0 in SEED_POSES:
+                ok, q, *_ = kin.ik(p, approach_dir(p, tilt), None, q0=q0)
+                if ok and not kin.in_collision(q, 0.8):
+                    self.home_point, self.home_tilt = p, tilt
+                    return np.concatenate([q, [0.8]])
+        raise RuntimeError(f"No IK solution for the home point {p}")
 
     # --------------------------------------------------------------- reset
     def set_task_pool(self, pool: list[TaskSpec] | None):
@@ -168,6 +189,9 @@ class GoalEnv(gym.Env):
         self.d.qpos[self.qadr] = self.home
         self.d.ctrl[:] = self.home
         mujoco.mj_forward(self.m, self.d)
+        self.grasped_start = False
+        if self.grasped_start_prob > 0 and self.np_random.random() < self.grasped_start_prob:
+            self.grasped_start = self._start_grasped()
 
         R = self.d.site_xmat[self.site].reshape(3, 3)
         self.ee_x, self.ee_z = R[:, 0].copy(), R[:, 2].copy()     # Target gripper orientation (ee actions)
@@ -177,6 +201,38 @@ class GoalEnv(gym.Env):
         self.prev_action = np.zeros(6)
         self._next_goal()
         return self._obs(), self._info()
+
+    def _start_grasped(self) -> bool:
+        """Put the arm in a top-down IK grasp around the object and close the jaws. False (and back to the home
+        pose) if there is no such grasp or the jaws do not hold the object."""
+        pos, yaw = self.object_pose()
+        cands = [c for c in self.checker.grasp_candidates(self.shape, self.checker.grasp_point(self.shape, pos), yaw)
+                 if c[0] == 0 and c[3] <= self.checker.kin.max_opening]
+        kin = self.checker.kin
+        for _, approach, jaw, width in cands:
+            gp = self.checker.grasp_point(self.shape, pos)
+            for q0 in SEED_POSES:
+                ok, q, *_ = kin.ik(gp, approach, jaw, q0=q0)
+                if not ok:
+                    continue
+                g_open, g_close = kin.gripper_for_opening(width), kin.gripper_for_opening(max(width - 0.02, 0.004))
+                self.d.qpos[self.qadr] = np.r_[q, g_open]
+                self.d.ctrl[:] = np.r_[q, g_close]
+                mujoco.mj_forward(self.m, self.d)
+                mujoco.mj_step(self.m, self.d, nstep=10 * self.n_sub)       # Close the jaws (0.5 s)
+                if all(self._jaw_contacts()):
+                    return True
+                break
+        mujoco.mj_resetData(self.m, self.d)                                 # No grasp: normal start
+        for name in self.shapes:
+            self._set_object(name, (2.0 + 0.2 * list(self.shapes).index(name), 0.0, self.shapes[name].half_height),
+                             0.0)
+        self._set_object(self.task.obj, (*self.task.start_xy, self.cfg["robot"]["table_z_m"] + self.shape.half_height),
+                         self.task.start_yaw)
+        self.d.qpos[self.qadr] = self.home
+        self.d.ctrl[:] = self.home
+        mujoco.mj_forward(self.m, self.d)
+        return False
 
     def random_task(self) -> TaskSpec:
         lo, hi = np.array(self.e["start_min_m"]), np.array(self.e["start_max_m"])
@@ -308,12 +364,10 @@ class GoalEnv(gym.Env):
         self.goal_lifted |= lifted
 
         w = self.w
-        g_lo, g_hi = self.ctrl_lo[5], self.ctrl_hi[5]
-        jaws_open = (self.d.qpos[self.qadr[5]] - g_lo) / (g_hi - g_lo)          # 0 closed, 1 fully open
-        pregrasp = (d_reach < w["pregrasp_dist_m"]) * jaws_open
-        reward = (w["reach"] * (1 - np.tanh(d_reach / w["reach_scale_m"])) + w["pregrasp"] * pregrasp
+        track_on = grasped or not lift_needed          # A lifted goal is tracked only while the object is held
+        reward = (w["reach"] * (1 - np.tanh(d_reach / w["reach_scale_m"]))
                   + w["grasp"] * grasped + w["lift"] * (lifted and lift_needed and grasped)
-                  + w["track"] * (1 - np.tanh(d_goal / 0.05))
+                  + w["track"] * track_on * (1 - np.tanh(d_goal / 0.05))
                   - w["action_rate"] * float(np.sum((a - self.prev_action) ** 2))
                   - w["joint_vel"] * float(np.sum(self.d.qvel[self.dadr] ** 2)) - w["time"])
         self.prev_action = a
@@ -327,7 +381,7 @@ class GoalEnv(gym.Env):
         info = self._info(d_goal=d_goal, success=success, lift_needed=lift_needed)
         info["goal_reached_now"] = bool(success)
         if terminated or truncated:   # SB3 reads is_success from the last step: did the episode reach a goal?
-            info["is_success"] = self.goals_reached >= 1
+            info["is_success"] = None if self.grasped_start else self.goals_reached >= 1   # None: SB3 skips it
         if terminated:
             info["failure"] = "object_lost"
         return self._obs(), float(reward), terminated, truncated, info
@@ -381,7 +435,8 @@ class GoalEnv(gym.Env):
         pos, yaw = self.object_pose()
         return {"task": self.task.to_dict(), "goal": list(self.goal), "goal_index": self.goals_reached,
                 "goals_reached": self.goals_reached, "d_goal": d_goal, "is_success": bool(success),
-                "stage": self.stage(d_goal, lift_needed), "object_pose": [*map(float, pos), float(yaw)]}
+                "stage": self.stage(d_goal, lift_needed), "object_pose": [*map(float, pos), float(yaw)],
+                "grasped_start": bool(getattr(self, "grasped_start", False))}
 
     def render(self):
         if self._renderer is None:

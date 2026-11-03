@@ -124,3 +124,15 @@ def test_curriculum_callback_feeds_results_and_sets_the_pool(gcfg, shapes, reach
     pools = env.get_attr("task_pool")
     assert all(p is not None and len(p) == 8 for p in pools)
     assert len(cur.hist_vecs) >= 4 and len(load_jsonl(tmp_path / "t.jsonl")) == len(cur.hist_vecs)
+
+
+def test_grasped_start_records_are_marked(gcfg, reach_map):
+    from src.slingpuck.general.failures import record_from_info
+    from src.slingpuck.general.goal_env import GoalEnv
+
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    _, info = env.reset(seed=0)
+    assert record_from_info(info, "x").notes == "grasped_start"
+    env0 = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=0.0)
+    _, info0 = env0.reset(seed=0)
+    assert record_from_info(info0, "y").notes == ""
