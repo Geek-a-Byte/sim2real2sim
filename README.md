@@ -32,7 +32,9 @@ high-level policy chooses **block**, **sling** or **hold** against the opponent.
 | Milestone | Content | Status |
 |---|---|---|
 | M4 | Opponent model, event-level match env, primitives, rule-based baselines, match eval, MuJoCo match | Done. Waits for review |
-| S1–S6 | Win sling puck as a race of rates: shot model, greedy game rule, skills on the arm, physics calibration, opponents, deploy | Planned. See [docs/PLAN.md](docs/PLAN.md) |
+| S1 | Shot model: P(through \| launch x, aim, pull) from simulated shots, and the shot time T(puck) | Done. Waits for review |
+| S2 | Greedy game rule, per-puck positions, greedy shot choice, PPO selector script, new metrics | Done. Waits for review |
+| S3–S6 | Skills on the arm, physics calibration, 4 opponent profiles, deploy | Planned. See [docs/PLAN.md](docs/PLAN.md) |
 
 This branch (`slingpuck`) is the sling puck task: step 7 ("outcome layer for
 dynamic tasks") of the Sim2Real2Sim synthesis. The general any-task method is
@@ -51,7 +53,7 @@ Requirements: Python 3.10 or later. The project was tested with Python 3.14
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 49 tests, about 10 s
+pytest -q            # 63 tests, about 10 s
 ```
 
 **Run all commands from the project root folder**, in the form
@@ -69,8 +71,13 @@ PyYAML, Matplotlib, Pillow (GIF output), MuJoCo 3.x.
 ## Quick start
 
 ```bash
+# Fit the shot model once (and again after any change to the board, puck, band or release noise)
+python -m src.slingpuck.shot.model                           # cache/shot_model.npz, about 15 s
+
 # Scripted selectors against the scripted opponent (event-level match)
 python -m src.slingpuck.eval.match_eval
+python -m src.slingpuck.eval.match_eval --policies greedy_sling greedy_rule --selection greedy random fixed
+python -m src.slingpuck.train.train_selector --seeds 0      # PPO selector (configs/train_selector.yaml)
 python -m src.slingpuck.eval.match_eval --policies greedy_sling reload_rule tell_rule --tell 0 0.5 1
 python -m src.slingpuck.eval.match_eval --no-hand            # ablation: the policy does not see the hand
 
@@ -101,6 +108,7 @@ src/slingpuck/
   so101_slingpuck.py       The full scene (table, board, bands, robot, 10 pucks): viewer, --save, --no-viewer
   physics/
     band_model.py          Pre-stretched band: V geometry, nonlinear tension, closed hysteresis loop, release
+    shot_sim.py            One robot shot: band release, release noise, puck flight in a board-only MuJoCo scene
     mujoco_match.py        MuJoCo match: SO-101 (black pucks) against a scripted human (white pucks), all pucks in the physics
   envs/
     match_env.py           Event-level match (block / sling / hold over frozen primitives)
@@ -109,12 +117,15 @@ src/slingpuck/
     scripted_opponent.py   Human-like opponent: reload, place, pull, hold, release; hand trajectory; tell
   primitives/
     block.py               Block primitive: save probability from the arm's return time and the puck's arrival time
-    sling.py               Sling primitive: timings and success probability
+    sling.py               Sling primitive: fixed model, and ShotSelector (puck and shot with the best P(through) / T)
+  shot/
+    model.py               Shot model: ensemble MLP for P(through | launch x, aim, pull); fit with python -m
   policies/
     asymmetric.py          AsymmetricActorCriticPolicy for SB3 PPO (for the M5 selector)
-    match_scripted.py      AlwaysBlock, GreedySling, ReloadRule, TellRule, OracleReload
+    match_scripted.py      AlwaysBlock, GreedySling, ReloadRule, TellRule, OracleReload, GreedyRule
   train/
     common.py              Match env factory, run loader, shared PPO runner and CLI, outcome logging
+    train_selector.py      PPO selector over block / sling / wait
   eval/
     match_eval.py          Win/loss, puck difference, tell sweep, hand ablation
     stats.py               Wilson and Student-t confidence intervals
@@ -226,8 +237,18 @@ not simulate the puck and the arm at 1 kHz. It runs at 10 ms steps and uses:
 
   Phi is the standard normal CDF. An arm that is away from the gate saves
   nothing. An arm that stayed at the gate saves with `block_save_prob`.
-- **Sling primitive** (`primitives/sling.py`): fixed timings and a success
-  probability (`sling_success_prob`).
+- **Sling primitive** (`primitives/sling.py`, `shot.selection` in `env.yaml`):
+  - `greedy` (default): the shot model (`shot/model.py`) gives P(through) for each
+    candidate shot (launch x, aim, pull), and the time of a shot depends on where
+    the puck lies: `T = pick + (|arm → puck| + |puck → seat|) / arm_speed + seat_release + pull / draw_speed`.
+    The robot takes the puck and shot with the highest (P + UCB bonus) / T. Pucks
+    jammed against a side wall go last.
+  - `random`: a random puck with the most likely shot (the "random puck order" baseline).
+  - `fixed`: the old model, fixed timings and `sling_success_prob`.
+- **Shot model** (`shot/model.py`): 5 small MLPs, each on a bootstrap sample of
+  4000 simulated shots (`physics/shot_sim.py`: band release, release noise, puck flight
+  in MuJoCo). Held-out accuracy 97.9%. The file stores a fingerprint of the board,
+  puck, band and noise values, and refuses to load under other values.
 
 All primitive values are placeholders in `env.yaml` (`match:`) until they are
 measured on the robot. Speed: about 70,000 decisions per second (one process).
@@ -249,16 +270,17 @@ measured on the robot. Speed: about 70,000 decisions per second (one process).
 | Action | Effect |
 |---|---|
 | 0 block | From the band: return to the gate (0.6 s). At the gate: stay; the block primitive defends |
-| 1 sling | From the gate: move to the band (0.6 s), fetch the next puck (1.0 s), sling (0.9 s). From the band: fetch and sling. Ignored when busy or out of pucks |
-| 2 hold | Keep the arm where it is (at the band: ready for another sling, gate open) |
+| 1 sling | From the gate: move to the band (0.6 s), then fetch and sling the chosen puck (time from the shot choice). From the band: fetch and sling. Ignored when busy or out of pucks |
+| 2 wait | Keep the arm where it is (at the band: ready for another sling, gate open). Called `hold` before; renamed because the adaptation plan uses HOLD for "press the puck on the band" |
 
 Arm states: gate → to_band → slinging → at_band → to_gate → gate. The gate is
 open from the sling command until the arm is back (the explicit recovery time).
 After the return, the gripper needs `cover_time_s` to cover the gate.
 
-- **Observation (20 values):** tracked incoming opponent puck (only after the
+- **Observation (22 values):** tracked incoming opponent puck (only after the
   camera latency), opponent hand (x, y, vx, vy), arm state (one-hot, time left,
-  gate covered), puck counts, own puck in flight, time left.
+  gate covered), puck counts, own puck in flight, the robot's best shot
+  (P(through) and its time T), time left.
   `match.observe_hand: false` sets the hand values to zero (the M5 ablation).
 - **Privileged (critic only):** opponent phase, time to release, next shot
   (threat, x, speed), incoming threat and its time to the gate.
@@ -279,13 +301,35 @@ python -m src.slingpuck.eval.match_eval [--policies ...] [--matches 400] [--tell
 | `reload_rule` | **The plan's baseline:** sling only when the opponent reloads (hand away from its band line); otherwise go back to the gate |
 | `tell_rule` | Like `reload_rule`, but also slings while the opponent aims if the hand x shows a likely miss |
 | `oracle_reload` | `reload_rule` with the opponent's true phase (privileged) |
+| `greedy_rule` | **The adaptation plan's layer 3:** sling when the best shot's P(through) is more than the threats that blocking would save in the same time T_shot (race of rates) |
 
 The hand-based reload detector is reliable where it matters: it marks the
 opponent as aiming in more than 98% of pull/hold frames (tested).
 
+**S2 results: shot selection** (400 matches per row, tell 0.8, placeholder
+times; `results/match/s2_selection/`). Net = pucks sent − received per minute:
+
+| Policy | Greedy shot choice: win [95% CI], net/min | Random puck order | Old fixed sling |
+|---|---|---|---|
+| `greedy_sling` | 70% [66, 75], +7.3 | 58% [54, 63], +5.7 | 30% [25, 34], +1.1 |
+| `greedy_rule` | 59% [54, 64], +6.6 | 52% [47, 56], +4.6 | 0% (never slings) |
+| `tell_rule` | 34% [29, 39], +1.1 | 24% [20, 29], −0.9 | 11% [8, 14], −4.6 |
+| `reload_rule` | 8% [6, 11], −4.8 | 6% [4, 9], −5.6 | 4% [3, 6], −7.4 |
+| `always_block` | 0%, 0 | 0%, 0 | 0%, 0 |
+
+- **The greedy shot choice (layer 2) helps every policy that slings.** Near pucks
+  and clean shots first give about 33 shots per minute.
+- **The greedy rule (layer 3) is below "always sling" here.** Blocking pays only
+  when the arm is at the gate in time, and with these times it saves 1–2% of the
+  threats. With the old fixed sling (0.95 in 2.5 s from the gate), the rule
+  calculates that blocking saves more than a shot clears, so it never slings: the
+  race-of-rates condition says that this robot cannot win by slinging.
+
+The older results below use the old fixed sling (`shot.selection: fixed`).
+
 ![Match baselines](docs/figures/match_baselines.png)
 
-| Policy (400 matches, tell 0.8) | Win [95% CI] | Loss | Sent − received [95% CI] | Conceded while away |
+| Policy (400 matches, tell 0.8, fixed sling) | Win [95% CI] | Loss | Sent − received [95% CI] | Conceded while away |
 |---|---|---|---|---|
 | `always_block` | 0% [0, 1] | 0% | +0.0 | 0 / match |
 | `greedy_sling` | 34% [29, 38] | 18% | +1.1 [+0.8, +1.5] | 20 / match |
@@ -368,6 +412,7 @@ pytest -q
 | `test_asymmetric_policy.py` | On the match env: the actor ignores privileged input, the critic uses it, save and load |
 | `test_slingpuck_scene.py` | Board in front of the robot, turning axis matches the config, board and robot on the same table, flicked puck slows with Coulomb friction, wall bounce keeps the configured restitution, opponent camera faces the robot |
 | `test_match_mujoco.py` | 5 black and 5 white pucks, both players shoot, no blow-up (speeds stay below 6 m/s, all pucks on the board), guard pose stands in the gate |
+| `test_shot.py` | Shot simulator outcomes, shot model accuracy and fingerprint, greedy shot choice (near pucks first, jammed last), shot time model, greedy match bookkeeping, greedy rule decisions |
 
 ---
 

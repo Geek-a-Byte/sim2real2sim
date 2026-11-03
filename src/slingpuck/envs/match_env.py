@@ -1,9 +1,10 @@
 """Hierarchical match against a scripted opponent (event-level sim).
 
-The high-level policy picks one of three frozen primitives every decision_dt_s:
+The high-level policy (layer 3, the game decision) picks one of three actions every decision_dt_s:
   0 BLOCK  go to (or stay at) the gate; the block primitive defends it
   1 SLING  shoot the next puck (sling primitive); the arm leaves the gate
-  2 HOLD   keep the arm where it is (at the band: stay ready for another sling)
+  2 WAIT   keep the arm where it is (at the band: stay ready for another sling)
+(WAIT was called HOLD before; the adaptation plan uses HOLD for "press the puck on the band".)
 
 Arm states: GATE -> (SLING) TO_BAND -> SLINGING -> AT_BAND -> (BLOCK) TO_GATE -> GATE.
 SLING from AT_BAND goes straight to SLINGING. During TO_BAND, SLINGING, AT_BAND
@@ -14,16 +15,19 @@ Fidelity. Millions of decisions are needed, so nothing is simulated at 1 kHz:
 - A threat that reaches the gate is saved with the probability of the block
   primitive (primitives/block.py): it depends on the time between the arm's
   return to the gate and the puck's arrival, and it is 0 if the arm is away.
-- An agent sling succeeds with the probability of the sling primitive.
+- The sling (primitives/sling.py, shot.selection): "fixed" = fixed times and success probability;
+  "greedy" / "random" = the shot model (layer 2) chooses the puck and the shot, and gives the time from
+  the puck's position and P(through) from the MuJoCo-trained shot model.
 
-Puck bookkeeping: each side starts with pucks_per_side. A puck in flight belongs
-to no side until it resolves. Rewards and the win rule come from `scoring`
-(placeholder: first side with no pucks wins).
+Puck bookkeeping: each agent puck has a position on the agent half (it sets the fetch time). A puck in
+flight belongs to no side until it resolves. A received puck or a missed own shot lands at a random
+position on the agent half. Rewards and the win rule come from `scoring` (placeholder: first side with
+no pucks wins).
 
-Observation (what the robot can sense): the tracked incoming opponent puck (after
-the camera latency), the opponent hand (position, velocity), the arm state, puck
-counts and time. The loaded opponent puck is hidden under the hand. The critic
-also gets the opponent's internal state (privileged).
+Observation (what the robot can sense): the tracked incoming opponent puck (after the camera latency),
+the opponent hand (position, velocity), the arm state, puck counts, the robot's own best shot (P(through)
+and its time T, from its puck positions) and time. The loaded opponent puck is hidden under the hand.
+The critic also gets the opponent's internal state (privileged).
 """
 import gymnasium as gym
 import numpy as np
@@ -32,12 +36,14 @@ from gymnasium import spaces
 from src.slingpuck.opponent.scripted_opponent import PHASES, Opponent, Shot
 from src.slingpuck.physics.band_model import GRAVITY
 from src.slingpuck.primitives.block import BlockPrimitive
-from src.slingpuck.primitives.sling import SlingPrimitive
+from src.slingpuck.primitives.sling import ShotSelector, SlingPrimitive
 
-BLOCK, SLING, HOLD = 0, 1, 2
-ACTION_NAMES = ("block", "sling", "hold")
+BLOCK, SLING, WAIT = 0, 1, 2
+ACTION_NAMES = ("block", "sling", "wait")
 ARM_STATES = ("gate", "to_band", "slinging", "at_band", "to_gate")
 OBS_CLIP = 5.0
+RACK_Y, RACK_PITCH = 0.07, 0.03      # Start positions of the agent pucks: a row at |y| = 7 cm (as so101_slingpuck)
+SHOT_TIME_SCALE = 3.0                # shot_time observation = T / 3 s
 
 
 class MatchEnv(gym.Env):
@@ -45,22 +51,32 @@ class MatchEnv(gym.Env):
     POLICY_OBS_NAMES = ("puck_valid", "puck_x", "puck_y", "puck_vx", "puck_vy",
                         "hand_x", "hand_y", "hand_vx", "hand_vy",
                         *(f"arm_{s}" for s in ARM_STATES), "arm_time_left", "gate_covered",
-                        "agent_pucks", "opp_pucks", "own_in_flight", "time_left")
+                        "agent_pucks", "opp_pucks", "own_in_flight", "shot_p", "shot_time", "time_left")
     PRIVILEGED_OBS_NAMES = (*(f"opp_{p}" for p in PHASES), "opp_time_to_release", "next_threat", "next_x",
                             "next_speed", "incoming_threat", "incoming_time_to_gate")
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, shot_model=None):
         super().__init__()
         self.cfg = config
         self.m = config["match"]
         self.scoring = config["scoring"]
         self.block = BlockPrimitive.from_config(config)
         self.sling = SlingPrimitive.from_config(config)
+        self.selection = config["shot"]["selection"]
+        if self.selection != "fixed":
+            if shot_model is None:
+                from src.slingpuck.shot.model import load_for
+                shot_model = load_for(config)
+            self.selector = ShotSelector(config, shot_model)
+            preview = {**config, "shot": {**config["shot"], "selection": "greedy"}}
+            self.preview = ShotSelector(preview, shot_model) if self.selection != "greedy" else self.selector
         hl = 0.5 * config["board"]["length_m"]
         self.half_length = hl
         r = config["puck"]["radius_m"]
+        self.r = r
         self.opp_band_y = hl - config["band"]["band_offset_from_end_wall_m"]
         self.gate_face_y = 0.5 * config["board"]["divider_thickness_m"] + r  # Opponent side of the divider
+        self.landing_x = 0.5 * config["board"]["width_m"] - r
         self.decel = config["puck"]["friction_kinetic"] * GRAVITY
         self.n_sub = max(1, int(round(self.m["decision_dt_s"] / self.m["sim_dt_s"])))
         self.max_steps = int(np.ceil(self.m["max_time_s"] / self.m["decision_dt_s"]))
@@ -79,18 +95,34 @@ class MatchEnv(gym.Env):
             cfg = {**cfg, "opponent": {**cfg["opponent"], "tell_strength": float(options["tell_strength"])}}
         self.opponent = Opponent(cfg, self.np_random)
         n = self.m["pucks_per_side"]
-        self.agent_side, self.opp_side = n, n
+        self.agent_pucks = [np.array([(i - (n - 1) / 2) * RACK_PITCH, -RACK_Y]) for i in range(n)]
+        self.opp_side = n
         self.t = 0.0
         self.steps = 0
         self.arm = "gate"
         self.arm_until = 0.0              # End time of the current arm motion
+        self.arm_xy = self.band_center    # Where the arm is when it is at the band (last seat point)
         self.gate_ready_since = -np.inf   # Time the arm got back near the gate (None = away)
         self.incoming: list[dict] = []    # Opponent pucks in flight
         self.own: dict | None = None      # Agent puck in flight
+        self.pending = None               # The chosen shot while the arm is slinging
         self.stats = {"sent": 0, "received": 0, "slings": 0, "sling_hits": 0, "threats": 0, "saves": 0,
                       "conceded_while_away": 0}
         self.opponent.reset(0.0, self.opp_side > 0)
         return self._obs(), self._info(None)
+
+    @property
+    def agent_side(self) -> int:
+        return len(self.agent_pucks)
+
+    @property
+    def band_center(self) -> np.ndarray:
+        return np.array([0.0, -self.opp_band_y])
+
+    def _landing(self) -> np.ndarray:
+        """A puck that lands on the agent half (received, or a missed own shot) stops somewhere in front of the band."""
+        y = self.np_random.uniform(-self.opp_band_y + self.r, -self.gate_face_y)
+        return np.array([self.np_random.uniform(-self.landing_x, self.landing_x), y])
 
     # -------------------------------------------------------------- step
     def step(self, action):
@@ -117,6 +149,16 @@ class MatchEnv(gym.Env):
     def can_sling(self) -> bool:
         return self.arm in ("gate", "at_band") and self.agent_side > 0 and self.own is None
 
+    def _start_slinging(self, start: float, from_xy) -> None:
+        """Choose the puck and the shot, and set the time of the at-band part of the sling."""
+        if self.selection == "fixed":
+            self.pending = None
+            self.arm, self.arm_until = "slinging", start + self.sling.at_band_s
+            return
+        c = self.selector.choose(self.agent_pucks, from_xy, self.np_random)
+        self.pending = c
+        self.arm, self.arm_until = "slinging", start + c.time_s
+
     def _apply_action(self, action) -> float:
         if action == SLING and self.can_sling():
             self.stats["slings"] += 1
@@ -124,7 +166,7 @@ class MatchEnv(gym.Env):
             if self.arm == "gate":
                 self.arm, self.arm_until = "to_band", self.t + self.sling.move_gate_to_band_s
             else:
-                self.arm, self.arm_until = "slinging", self.t + self.sling.at_band_s
+                self._start_slinging(self.t, self.arm_xy)
         elif action == BLOCK and self.arm == "at_band":
             self.arm, self.arm_until = "to_gate", self.t + self.m["move_band_to_gate_s"]
         return 0.0
@@ -134,11 +176,17 @@ class MatchEnv(gym.Env):
         t = self.t
         # Arm state machine
         if self.arm == "to_band" and t >= self.arm_until:
-            self.arm, self.arm_until = "slinging", self.arm_until + self.sling.at_band_s
+            self._start_slinging(self.arm_until, self.band_center)
         if self.arm == "slinging" and t >= self.arm_until:
-            self.agent_side -= 1
+            if self.pending is None:
+                self.agent_pucks.pop(0)
+                p_hit = self.sling.success_prob
+            else:
+                self.agent_pucks.pop(self.pending.index)
+                p_hit, self.arm_xy = self.pending.p, self.pending.seat
             self.own = {"t_resolve": self.arm_until + self.sling.flight_s,
-                        "hit": bool(self.np_random.random() < self.sling.success_prob)}
+                        "hit": bool(self.np_random.random() < p_hit)}
+            self.pending = None
             self.arm = "at_band"
         if self.arm == "to_gate" and t >= self.arm_until:
             self.arm, self.gate_ready_since = "gate", self.arm_until
@@ -150,7 +198,7 @@ class MatchEnv(gym.Env):
                 self.stats["sling_hits"] += 1
                 reward += self.scoring["reward_puck_sent"]
             else:
-                self.agent_side += 1
+                self.agent_pucks.append(self._landing())
             self.own = None
         # Opponent: shots launched now leave the opponent side
         for shot in self.opponent.advance(t, self.opp_side > 0):
@@ -185,7 +233,7 @@ class MatchEnv(gym.Env):
             return 0.0
         if self.gate_ready_since is None:
             self.stats["conceded_while_away"] += 1
-        self.agent_side += 1
+        self.agent_pucks.append(self._landing())
         self.stats["received"] += 1
         return self.scoring["reward_puck_received"]
 
@@ -199,6 +247,17 @@ class MatchEnv(gym.Env):
         return None
 
     # ------------------------------------------------------- observation
+    def best_shot(self):
+        """(P(through), T) of the shot the robot would take next, from where the arm is now."""
+        if self.agent_side == 0:
+            return 0.0, 0.0
+        if self.selection == "fixed":
+            t = self.sling.at_band_s + (self.sling.move_gate_to_band_s if self.arm == "gate" else 0.0)
+            return self.sling.success_prob, t
+        at_band = self.arm in ("at_band", "slinging")
+        c = self.preview.choose(self.agent_pucks, self.arm_xy if at_band else self.band_center)
+        return c.p, c.time_s + (0.0 if at_band else self.sling.move_gate_to_band_s)
+
     def _incoming_state(self):
         """Earliest-arriving opponent puck in flight that the camera has seen, true [x, y, vx, vy]."""
         latency = self.cfg["camera"]["latency_s"]
@@ -229,9 +288,10 @@ class MatchEnv(gym.Env):
             hand_part = [0.0] * 4
         arm = [float(self.arm == s) for s in ARM_STATES]
         covered = self.gate_ready_since is not None and self.t - self.gate_ready_since >= self.m["cover_time_s"]
+        shot_p, shot_t = self.best_shot()
         obs = np.array([*puck_part, *hand_part, *arm, max(self.arm_until - self.t, 0.0), float(covered),
                         self.agent_side / n, self.opp_side / n, float(self.own is not None),
-                        1.0 - self.t / self.m["max_time_s"]])
+                        shot_p, shot_t / SHOT_TIME_SCALE, 1.0 - self.t / self.m["max_time_s"]])
         return np.clip(obs, -OBS_CLIP, OBS_CLIP).astype(np.float32)
 
     def privileged_obs(self):
@@ -239,7 +299,6 @@ class MatchEnv(gym.Env):
         phase = self.opponent.phase(self.t)
         nxt = self.opponent.next_shot
         ttr = self.opponent.time_to_release(self.t)
-        _, f = self._incoming_state()
         true_in = min(self.incoming, key=lambda f: f["t_gate"]) if self.incoming else None
         obs = np.array([*(float(phase == p) for p in PHASES), min(ttr, 3.0) / 3.0,
                         float(nxt.threat) if nxt else 0.0, (nxt.x_launch / hl) if nxt else 0.0,
@@ -249,6 +308,7 @@ class MatchEnv(gym.Env):
         return np.clip(obs, -OBS_CLIP, OBS_CLIP).astype(np.float32)
 
     def _info(self, outcome):
+        stats = {**self.stats, "duration_s": self.t} if outcome else None
         return {"outcome": outcome, "agent_side": self.agent_side, "opp_side": self.opp_side,
                 "arm": self.arm, "opp_phase": self.opponent.phase(self.t), "can_sling": self.can_sling(),
-                "privileged": self.privileged_obs(), **({"stats": dict(self.stats)} if outcome else {})}
+                "privileged": self.privileged_obs(), **({"stats": stats} if outcome else {})}

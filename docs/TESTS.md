@@ -6,13 +6,13 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 49 tests, about 10 s
+pytest -q                          # 63 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
 
-The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
-`mujoco` package. If it is not installed, pytest skips these tests.
+The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`, `test_shot.py`)
+need the `mujoco` package. If it is not installed, pytest skips these tests.
 
 ## Contents
 
@@ -26,6 +26,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
 | [`test_asymmetric_policy.py`](#test_asymmetric_policypy) | 1 | Asymmetric actor-critic policy |
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
+| [`test_shot.py`](#test_shotpy) | 14 | Shot simulator, shot model, shot choice, greedy match, greedy rule |
 
 ---
 
@@ -33,7 +34,9 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
 
 | Fixture | What it gives |
 |---|---|
-| `cfg` | The merged config `load_config("v0")`. Scope: one per test session. Most tests use it |
+| `cfg` | The merged config `load_config("v0")` with `shot.selection: fixed` (the old fixed sling), so these tests need no shot model file. Scope: one per test session. Most tests use it |
+| `greedy_cfg` | `load_config("v0")` with `shot.selection: greedy` |
+| `shot_model` | A small shot model (3 members) fitted on 600 simulated shots. The real model uses 4000 shots and 5 members |
 
 The tests use version `v0` on purpose. A new `physics_params_v1.yaml` does not
 change the test results.
@@ -180,6 +183,31 @@ highest puck speed and whether each player held a puck.
 | `test_colours_split_five_and_five` | 5 black pucks start on the robot side. 5 white pucks start on the human side | The start state must match the game rules |
 | `test_both_players_shoot_and_physics_stays_sane` | Both players hold and shoot at least one puck. The highest puck speed is below 6 m/s. All pucks stay on the board. The count is 10 | Shows that the scripted plan works. Catches a physics blow-up (a blow-up gives speeds of tens to thousands of m/s) |
 | `test_robot_guard_pose_blocks_the_gate` | At the start, the gripper site is at the guard pose (within 3 mm). The guard pose is centered (x = 0) on the agent side (y < 0) | The closed gripper must stand in the gate to block shots |
+
+---
+
+## `test_shot.py`
+
+Code under test: `src/slingpuck/physics/shot_sim.py`, `src/slingpuck/shot/model.py`,
+`src/slingpuck/primitives/sling.py` (`ShotSelector`), `src/slingpuck/envs/match_env.py` (greedy
+selection), `src/slingpuck/policies/match_scripted.py` (`GreedyRule`). Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_straight_center_shot_goes_through` | A straight 2 cm pull from the center goes through, faster than 0.5 m/s, and reaches the divider at x ≈ 0 | The basic shot must work |
+| `test_off_center_shot_hits_the_divider` | 1 cm off center hits the gate edge; 5 cm off center hits the divider wall | The outcome classes (edge, miss) that the calibration logs |
+| `test_small_pull_is_weak` | Pulls of 1 mm and 5 mm do not reach the divider | Weak shots are one of the real failure types |
+| `test_angled_pull_still_launches_almost_straight` | A 0.3 rad pull still goes through, less than 8 mm off center at the divider | The pre-stretched band launches almost straight |
+| `test_release_noise_is_seeded` | The same seed gives the same noisy shots, and noise changes the shot | Repeatable samples for the shot model |
+| `test_shot_model_learns_where_shots_go_through` | The model gives P > 0.7 for a center shot, and P < 0.1 for a 4 cm off-center or a 6 mm pull | The model must learn the physics |
+| `test_shot_model_save_load_and_fingerprint` | Save and load give the same predictions. Another gate width changes the fingerprint, and the load then refuses | A shot model fitted on another board must never be used |
+| `test_greedy_choice_takes_the_near_puck_and_jammed_pucks_go_last` | Between a near and a far puck, the greedy choice takes the near one. A puck jammed against a wall goes last, but is taken when it is the only one | The adaptation plan: near pucks first, jammed pucks last |
+| `test_shot_time_follows_the_time_model` | T = pick + carry / arm speed + seat and release + pull / draw speed | The time model that the choice uses |
+| `test_random_selection_varies_the_puck` | Random selection takes at least 4 of 5 pucks in 40 choices | The "random puck order" baseline |
+| `test_greedy_match_conserves_pucks_and_removes_the_chosen_puck` | With greedy selection, the puck count never changes, and the released puck is the chosen one | Puck bookkeeping with positions |
+| `test_best_shot_observation` | The `shot_p` observation equals the best shot's P. From the gate, T includes the move out; at the band it is shorter | The greedy rule and the PPO selector read these values |
+| `test_greedy_shot_choice_beats_random_puck_order` | Over 40 matches, greedy selection gives a better puck difference than random puck order | Layer 2 must help |
+| `test_greedy_rule_decisions` | The rule slings with a good shot while the opponent reloads, blocks a threat that arrives in 50 ms when the shot is poor, and blocks with no pucks | Layer 3 decisions in clear cases |
 
 ---
 

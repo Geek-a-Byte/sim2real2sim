@@ -1,0 +1,18 @@
+# PPO selector over BLOCK / SLING / WAIT on the event-level match (train/train_selector.py).
+# The adaptation plan: the PPO selector replaces the greedy rule only if it wins more in the event sim.
+policy: asymmetric          # asymmetric (privileged critic) | mlp
+vec_env: subproc            # subproc | dummy
+n_envs: 8
+net_arch: [128, 128]
+total_timesteps: 3000000
+checkpoint_freq: 500000
+seeds: [0, 1, 2]
+ppo:
+  n_steps: 1024
+  batch_size: 2048
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 0.0003
+  ent_coef: 0.01
+  clip_range: 0.2

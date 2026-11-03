@@ -1,11 +1,12 @@
 """Match eval: match results of high-level selectors against the scripted opponent.
 
-    python -m src.slingpuck.eval.match_eval [--policies reload_rule tell_rule greedy_sling] \\
-        [--runs logs/selector/<run> ...] [--matches 300] [--tell 0 0.5 1]
+    python -m src.slingpuck.eval.match_eval [--policies reload_rule tell_rule greedy_sling greedy_rule] \\
+        [--runs logs/selector/<run> ...] [--matches 300] [--tell 0 0.5 1] [--selection greedy random fixed]
 
-Every policy plays the same matches (paired seeds). Per policy (and tell_strength):
+Every policy plays the same matches (paired seeds). Per policy (and tell_strength, and shot selection):
 win / loss / time-out rates (95% Wilson), mean puck difference sent - received
-(95% t), slings, pucks conceded while the arm was away, and the save rate.
+(95% t), slings, shots per minute, net clearing rate (sent - received per minute), pucks conceded while
+the arm was away, and the save rate. --selection compares the greedy shot choice with random puck order.
 Outputs match_summary.csv, match_results.png and eval_meta.yaml in
 results/match/<timestamp>/.
 """
@@ -35,6 +36,7 @@ SCRIPTED = {
     "reload_rule": lambda cfg: ms.ReloadRule(cfg),
     "tell_rule": lambda cfg: ms.TellRule(cfg),
     "oracle_reload": lambda cfg: ms.OracleReload(cfg),
+    "greedy_rule": lambda cfg: ms.GreedyRule(cfg),
 }
 
 
@@ -52,9 +54,9 @@ def play(policy, env, n_matches, base_seed, tell):
     return rows
 
 
-def summarize(name, tell, rows):
+def summarize(name, tell, rows, selection=None):
     n = len(rows)
-    out = {"policy": name, "tell_strength": tell, "matches": n}
+    out = {"policy": name, "tell_strength": tell, "selection": selection, "matches": n}
     for key in ("win", "loss", "time"):
         k = sum(r["outcome"] == key for r in rows)
         lo, hi = wilson_ci(k, n)
@@ -64,6 +66,10 @@ def summarize(name, tell, rows):
     out.update(diff_mean=mean, diff_ci_lo=lo, diff_ci_hi=hi)
     for key in ("slings", "sent", "received", "conceded_while_away"):
         out[f"{key}_per_match"] = float(np.mean([r[key] for r in rows]))
+    minutes = [r["duration_s"] / 60.0 for r in rows]
+    out["shots_per_min"] = float(np.mean([r["slings"] / m for r, m in zip(rows, minutes)]))
+    net = [(r["sent"] - r["received"]) / m for r, m in zip(rows, minutes)]
+    out["net_clearing_per_min"], out["net_ci_lo"], out["net_ci_hi"] = t_ci(net)
     threats = sum(r["threats"] for r in rows)
     out["save_rate"] = sum(r["saves"] for r in rows) / threats if threats else float("nan")
     return out
@@ -134,6 +140,8 @@ def main():
     parser.add_argument("--eval-seed", type=int, default=30_000)
     parser.add_argument("--tell", type=float, nargs="*", help="tell_strength values (default: config value)")
     parser.add_argument("--no-hand", action="store_true", help="Ablation: the policy does not see the hand")
+    parser.add_argument("--selection", nargs="*", choices=["greedy", "random", "fixed"],
+                        help="Shot selection(s) to compare (default: config shot.selection)")
     parser.add_argument("--out")
     args = parser.parse_args()
 
@@ -150,18 +158,24 @@ def main():
         model, asymmetric, _ = load_trained_run(run)
         policies.append((Path(run).name, model, asymmetric))
 
+    selections = args.selection or [config["shot"]["selection"]]
     table = []
-    for name, policy, wrap in policies:
-        for tell in tells:
-            env = MatchEnv(config)
-            env = PrivilegedObsWrapper(env) if wrap else env
-            rows = play(policy, env, args.matches, args.eval_seed, tell)
-            t_val = config["opponent"]["tell_strength"] if tell is None else tell
-            table.append(summarize(name, t_val, rows))
-            r = table[-1]
-            print(f"{name:>16} tell {t_val:.2f}: win {r['win_rate']:.1%} [{r['win_ci_lo']:.1%}, {r['win_ci_hi']:.1%}]"
-                  f"  loss {r['loss_rate']:.1%}  diff {r['diff_mean']:+.2f} [{r['diff_ci_lo']:+.2f}, {r['diff_ci_hi']:+.2f}]"
-                  f"  conceded away {r['conceded_while_away_per_match']:.1f}/match  saves {r['save_rate']:.0%}")
+    for selection in selections:
+        cfg_sel = {**config, "shot": {**config["shot"], "selection": selection}}
+        for name, policy, wrap in policies:
+            for tell in tells:
+                env = MatchEnv(cfg_sel)
+                env = PrivilegedObsWrapper(env) if wrap else env
+                rows = play(policy, env, args.matches, args.eval_seed, tell)
+                t_val = config["opponent"]["tell_strength"] if tell is None else tell
+                label = name if len(selections) == 1 else f"{name} ({selection})"
+                table.append(summarize(label, t_val, rows, selection))
+                r = table[-1]
+                print(f"{label:>24} tell {t_val:.2f}: win {r['win_rate']:.1%} [{r['win_ci_lo']:.1%}, "
+                      f"{r['win_ci_hi']:.1%}]  loss {r['loss_rate']:.1%}  diff {r['diff_mean']:+.2f} "
+                      f"[{r['diff_ci_lo']:+.2f}, {r['diff_ci_hi']:+.2f}]  shots/min {r['shots_per_min']:.1f}  "
+                      f"net/min {r['net_clearing_per_min']:+.2f}  conceded away "
+                      f"{r['conceded_while_away_per_match']:.1f}/match  saves {r['save_rate']:.0%}")
     with open(out / "match_summary.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(table[0]))
         w.writeheader()
@@ -171,7 +185,7 @@ def main():
     plot(table, out / "match_results.png", subtitle)
     (out / "eval_meta.yaml").write_text(yaml.safe_dump(
         {"params_version": config["meta"]["params_version"], "matches": args.matches, "eval_seed": args.eval_seed,
-         "tell": tells, "observe_hand": config["match"]["observe_hand"], "runs": args.runs, **git_state()},
+         "tell": tells, "selection": selections, "observe_hand": config["match"]["observe_hand"], "runs": args.runs, **git_state()},
         sort_keys=False))
     print(f"Wrote {out}")
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
-from src.slingpuck.envs.match_env import BLOCK, HOLD, SLING, MatchEnv
+from src.slingpuck.envs.match_env import BLOCK, SLING, WAIT, MatchEnv
 from src.slingpuck.envs.wrappers import PrivilegedObsWrapper
 from src.slingpuck.opponent.scripted_opponent import MISS_MIN_M, Opponent, threat_half_width
 from src.slingpuck.policies.match_scripted import AlwaysBlock, GreedySling, ReloadRule
@@ -119,13 +119,13 @@ def test_sling_timing(cfg):
     assert env.arm == "to_band" and env.gate_ready_since is None
     t_release = m["move_gate_to_band_s"] + m["fetch_time_s"] + m["sling_core_s"]
     while env.arm != "at_band":
-        env.step(HOLD)
+        env.step(WAIT)
     assert env.t == pytest.approx(t_release, abs=m["decision_dt_s"] + 1e-9)
     assert env.own is not None and env.agent_side == m["pucks_per_side"] - 1
     env.step(BLOCK)
     assert env.arm == "to_gate"
     while env.arm != "gate":
-        env.step(HOLD)
+        env.step(WAIT)
     assert env.gate_ready_since == pytest.approx(env.t, abs=m["decision_dt_s"])
 
 

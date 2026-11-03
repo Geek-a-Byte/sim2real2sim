@@ -38,14 +38,26 @@ raise the rate:
 
 Each milestone stops for review.
 
-| Milestone | Content | Needs from the team |
-|---|---|---|
-| S1. Shot model in sim | Sample aim and pull in the MuJoCo release (band model, gate, friction). Fit P(through \| puck position, aim, pull). Model T(puck i) from the distance of the puck to the pocket | New puck diameter, thickness, mass (one puck) and gate width. Until then, v0 values |
-| S2. Greedy game rule | Give `MatchEnv` the position of each agent puck. Use the shot model for the sling time and success. Add the greedy SLING-or-BLOCK rule. New metrics: shots per minute and net clearing rate | — |
-| S3. Skills on the arm | PICK, SEAT, DRAW(aim, pull), BLOCK(x) and the pressing HOLD in the MuJoCo match, with the shot model's choice. Scripted first | Arm base position |
-| S4. Physics calibration | Log 40–60 real shots (aim, pull, webcam track, result). Fit band stiffness, friction and release noise. Write `physics_params_v1.yaml`. Fit the shot model again | Real shots, overhead webcam at 120 fps or more |
-| S5. Opponents and games | A scripted opponent with a fixed shot rate and accuracy, then one profile per team member (4 people), then human games | Video of each team member playing |
-| S6. Deploy | Opponent state (drawing or not, pucks left) from the webcam. ONNX export, Jetson latency | Jetson access |
+| Milestone | Content | Needs from the team | Status |
+|---|---|---|---|
+| S1. Shot model in sim | Sample launch x, aim and pull in the MuJoCo release (band model, gate, friction). Fit P(through \| launch x, aim, pull). Model T(puck i) from the distance of the puck to the seat point | New puck diameter, thickness, mass (one puck) and gate width. Until then, v0 values | **Done:** `physics/shot_sim.py`, `shot/model.py`, `primitives/sling.py`. Fit again with the new sizes |
+| S2. Greedy game rule | Give `MatchEnv` the position of each agent puck. Use the shot model for the sling time and success. Add the greedy SLING-or-BLOCK rule. New metrics: shots per minute and net clearing rate | — | **Done:** `envs/match_env.py`, `GreedyRule`, `eval/match_eval.py --selection`, `train/train_selector.py` |
+| S3. Skills on the arm | PICK, SEAT, DRAW(aim, pull), BLOCK(x) and the pressing HOLD in the MuJoCo match, with the shot model's choice. Scripted first | Arm base position | Not started |
+| S4. Physics calibration | Log 40–60 real shots (aim, pull, webcam track, result). Fit band stiffness, friction and release noise. Write `physics_params_v1.yaml`. Fit the shot model again | Real shots, overhead webcam at 120 fps or more | Not started |
+| S5. Opponents and games | A scripted opponent with a fixed shot rate and accuracy, then one profile per team member (4 people), then human games | Video of each team member playing | Not started |
+| S6. Deploy | Opponent state (drawing or not, pucks left) from the webcam. ONNX export, Jetson latency | Jetson access | Not started |
+
+**Notes on S1 and S2**
+
+- P(through) depends on the shot (launch x, aim, pull). The puck's position enters
+  through the time T, because the arm must carry the puck to its seat point.
+- The adaptation plan's "train the shot model in the event-level sim" is not possible, because
+  `MatchEnv` does not simulate a shot. The samples come from `physics/shot_sim.py`
+  (MuJoCo), and the fitted model runs inside `MatchEnv`.
+- `GreedyRule` compares both actions over the same time window (T_shot). With the
+  time until the next opponent shot as T_block, blocking an aimed shot always
+  looks better, and the rule becomes `reload_rule`.
+- HOLD in `MatchEnv` is now WAIT. HOLD is free for the S3 skill (press the puck on the band).
 
 ## Evaluation
 
@@ -65,11 +77,6 @@ general task (Task 1) on the `generalized` branch.
 
 ## Open questions
 
-- **HOLD has two meanings.** In `MatchEnv`, HOLD keeps the arm where it is. In
-  the adaptation plan, HOLD presses the puck on the band. S2 must rename one.
-- **Where the shot model trains.** The plan says "the event-level sim", but
-  `MatchEnv` does not simulate a shot. S1 takes the samples from the MuJoCo
-  release and uses the fitted model inside `MatchEnv`.
 - **Gate clearance.** The opponent model accepts gate width / 2 − puck radius
   only between 0 and 6 mm. The new puck and gate must fit, or the limit changes.
 - **Rules.** The plan assumes standard sling puck. Confirm that the course
