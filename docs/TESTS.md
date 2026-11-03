@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 115 tests, about 15 s
+pytest -q                          # 116 tests, about 15 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -30,7 +30,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_goal_env.py`](#test_goal_envpy) | 38 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
 | [`test_curriculum.py`](#test_curriculumpy) | 12 |
-| [`test_expert.py`](#test_expertpy) | 5 | General method: scripted expert (demos for behaviour cloning) | General method: trial logs and curriculum |
+| [`test_expert.py`](#test_expertpy) | 6 | General method: scripted expert (demos for behaviour cloning) | General method: trial logs and curriculum |
 
 ---
 
@@ -292,6 +292,7 @@ Code under test: `src/slingpuck/general/expert.py`. Needs `mujoco`.
 | `test_expert_acts_through_the_policy_action_space` | Every expert action is 6 values in [-1, 1] | The policy can copy only actions in its own action space |
 | `test_expert_starts_in_the_right_phase` | Grasped start: carry; pregrasp start: close; normal start: approach | The expert must continue from an assisted start |
 | `test_recorded_demos_pair_observations_with_clean_actions` | Recorded demos have one observation per action, and the gripper commands are clean (open or close) even with execution noise | DART: train on the clean expert action from the noisy states |
+| `test_bc_learns_the_expert_and_warmup_keeps_the_actor` | A short BC run cuts the copy error; a critic warm-up with the actor frozen leaves the actions unchanged but trains the critic | Fine-tuning must not destroy the BC actor before the critic is fitted |
 
 ---
 

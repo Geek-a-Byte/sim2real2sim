@@ -7,6 +7,12 @@
 Writes logs/general/<run_id>/: run_config.yaml, checkpoints, final_model.zip and sim_trials.jsonl (every
 training episode as a trial record). The curriculum gets the episode results after each rollout and
 gives the envs a new task pool. Use --resume to continue from a model (the next real2sim round).
+
+Warm start from behaviour cloning (general/bc.py):
+    python -m src.slingpuck.general.train_teacher --objects puck --init logs/general/bc_<...>/bc_model.zip \
+        --critic-warmup 200000 --lr 1e-4
+--init copies the BC policy weights into a new PPO model. --critic-warmup first trains only the critic (the
+actor is frozen), so that the first PPO updates of the actor use a fitted value function.
 """
 import argparse
 from datetime import datetime
@@ -55,6 +61,13 @@ class CurriculumCallback(BaseCallback):
         self.training_env.env_method("set_task_pool", self.cur.sample_pool(self.pool_size))
 
 
+def set_actor_trainable(policy, trainable: bool):
+    """Freeze or unfreeze the actor (encoder, MLP, action head, log_std); the critic stays trainable."""
+    from src.slingpuck.general.bc import actor_parameters
+    for param in [*actor_parameters(policy), policy.log_std]:
+        param.requires_grad_(trainable)
+
+
 def make_env_fn(cfg, rmap, student, objects):
     def fn():
         return GoalEnv(cfg, student=student, reach_map=rmap, objects=objects)
@@ -80,6 +93,9 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--pool-size", type=int)
     p.add_argument("--resume", help="final_model.zip to continue from")
+    p.add_argument("--init", help="bc_model.zip: start the policy from these behaviour-cloning weights")
+    p.add_argument("--critic-warmup", type=int, default=0, help="Steps of critic-only training first (with --init)")
+    p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--log-std-init", type=float, default=-1.0,
                    help="Start action noise (std = exp of this; -1 gives 0.37). Run 1 used 0 (std 1): the policy "
                         "saturated its actions to avoid the action-rate penalty")
@@ -103,16 +119,26 @@ def main():
         model = PPO.load(args.resume, env=env, custom_objects={"policy_class": PairedPointPolicy})
     else:
         model = PPO(PairedPointPolicy, env, n_steps=512, batch_size=1024, n_epochs=5, gamma=0.99,
-                    learning_rate=3e-4, ent_coef=0.0, seed=args.seed, verbose=0,
+                    learning_rate=args.lr, ent_coef=0.0, seed=args.seed, verbose=0,
                     policy_kwargs={"net_arch": [256, 256], "log_std_init": args.log_std_init},
                     tensorboard_log=str(REPO_ROOT / "tensorboard_logs" / "general"))
     callbacks = CallbackList([
         CurriculumCallback(cur, run_dir / "sim_trials.jsonl", args.pool_size or cfg["curriculum"]["pool_size"]),
         CheckpointCallback(save_freq=max(200_000 // args.n_envs, 1), save_path=str(run_dir), name_prefix="model"),
     ])
+    if args.init:
+        bc = PPO.load(args.init, custom_objects={"policy_class": PairedPointPolicy})
+        model.policy.load_state_dict(bc.policy.state_dict())
+        print(f"Policy initialised from {args.init}")
     print(f"Training {run_id}")
-    model.learn(total_timesteps=args.timesteps, callback=callbacks, tb_log_name=run_id,
-                reset_num_timesteps=not args.resume)
+    warmup = min(args.critic_warmup, args.timesteps) if args.init else 0
+    if warmup:
+        set_actor_trainable(model.policy, False)
+        model.learn(total_timesteps=warmup, callback=callbacks, tb_log_name=run_id, reset_num_timesteps=True)
+        set_actor_trainable(model.policy, True)
+        print(f"Critic warm-up done ({warmup} steps); the actor now trains too")
+    model.learn(total_timesteps=args.timesteps - warmup, callback=callbacks, tb_log_name=run_id,
+                reset_num_timesteps=not (args.resume or warmup))
     model.save(run_dir / "final_model")
     env.close()
     print(f"Saved {run_dir / 'final_model.zip'}")

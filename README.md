@@ -56,7 +56,7 @@ Requirements: Python 3.10 or later. The project was tested with Python 3.14
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 115 tests, about 15 s
+pytest -q            # 116 tests, about 15 s
 ```
 
 **Run all commands from the project root folder**, in the form

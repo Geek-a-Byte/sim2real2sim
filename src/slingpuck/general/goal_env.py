@@ -7,7 +7,8 @@ goal passes the reachable-goal filter (general/reachability.py).
 
 Observation (Dict):
   points      (n_points, 7)  paired points; the student mode masks and adds noise (webcam view)
-  proprio     (18,)          joint positions, joint velocities / 10, last action
+  proprio     (27,)          joint positions, joint velocities / 10, last action, gripper position, approach
+                             axis and jaw axis (forward kinematics of the joint encoders, so deployable)
   privileged  (23,)          object pose and velocity, goal, jaw contacts, gripper site (critic / teacher only)
 Action: 6 values in [-1, 1]. robot.action_space "ee" (default): gripper motion dx, dy, dz (x ee_pos_step_m),
 tilt and roll (x ee_rot_step_rad), mapped to the 5 arm joints by one damped least-squares step of the site
@@ -111,7 +112,7 @@ class GoalEnv(gym.Env):
         self.task_pool: list[TaskSpec] | None = None
         self.observation_space = spaces.Dict({
             "points": spaces.Box(-np.inf, np.inf, (n, 7), np.float32),
-            "proprio": spaces.Box(-np.inf, np.inf, (18,), np.float32),
+            "proprio": spaces.Box(-np.inf, np.inf, (27,), np.float32),
             "privileged": spaces.Box(-np.inf, np.inf, (23,), np.float32),
         })
         self.action_space = spaces.Box(-1.0, 1.0, (6,), np.float32)
@@ -448,7 +449,10 @@ class GoalEnv(gym.Env):
                 valid[int(self.np_random.integers(len(valid)))] = 1.0
         pts = np.concatenate([cur * valid[:, None], tgt, valid[:, None]], axis=1)   # Targets are always known
         q, qd = self.d.qpos[self.qadr], self.d.qvel[self.dadr]
-        proprio = np.concatenate([q, 0.1 * qd, self.prev_action])
+        R = self.d.site_xmat[self.site].reshape(3, 3)
+        # The gripper pose: the actions move the gripper, and without it the network had to learn the forward
+        # kinematics from the joint angles (a BC copy of the expert reached a goal in 2% of episodes)
+        proprio = np.concatenate([q, 0.1 * qd, self.prev_action, self.d.site_xpos[self.site], R[:, 0], R[:, 2]])
         j = self.m.joint(f"obj_{self.task.obj}")
         a, v = j.qposadr[0], j.dofadr[0]
         g_yaw = self.goal[3]

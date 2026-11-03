@@ -66,6 +66,9 @@ python -m src.slingpuck.general.reachability                      # build cache/
 mjpython -m src.slingpuck.general.view                            # live 3D window: scripted IK pick-and-place
 mjpython -m src.slingpuck.general.view --model logs/general/<run>/final_model.zip   # a trained policy
 python -m src.slingpuck.general.view --save goal.gif --episodes 2   # GIF instead of a window
+python -m src.slingpuck.general.bc --objects puck --episodes 1500        # expert demos + behaviour cloning
+python -m src.slingpuck.general.train_teacher --objects puck --init logs/general/bc_<run>/bc_model.zip \
+    --critic-warmup 200000 --lr 1e-4 --timesteps 10000000                 # PPO fine-tune from BC
 python -m src.slingpuck.general.train_teacher --curriculum uniform --timesteps 2000000      # (A)
 python -m src.slingpuck.general.train_teacher --curriculum atr --timesteps 2000000          # (B)
 python -m src.slingpuck.general.evaluate --model logs/general/<run>/final_model.zip --episodes 100

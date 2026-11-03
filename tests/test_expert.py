@@ -40,3 +40,29 @@ def test_recorded_demos_pair_observations_with_clean_actions(gcfg, reach_map):
     assert len(data["action"]) == len(data["points"]) == len(data["proprio"]) == n
     assert data["points"].shape[1:] == env.observation_space["points"].shape
     assert np.all(np.isin(np.sign(data["action"][:, 5]), (-1, 1)))     # Clean gripper commands: open or close
+
+
+def test_bc_learns_the_expert_and_warmup_keeps_the_actor(gcfg, reach_map):
+    """A short BC run lowers the copy error; a critic warm-up with the actor frozen leaves the actions unchanged."""
+    import torch as th
+    from stable_baselines3 import PPO
+
+    from src.slingpuck.general.bc import train_bc
+    from src.slingpuck.general.policy import PairedPointPolicy
+    from src.slingpuck.general.train_teacher import set_actor_trainable
+
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"])
+    stats, data = run_expert(env, 4, seed=0, max_steps=60, record=True)
+    model = PPO(PairedPointPolicy, env, n_steps=64, batch_size=64, n_epochs=2, seed=0,
+                policy_kwargs={"net_arch": [64, 64], "log_std_init": -1.0})
+    losses = train_bc(model, data, epochs=15, batch=128, log=lambda *a: None)
+    assert losses[-1] < 0.6 * losses[0]
+    obs, _ = env.reset(seed=3)
+    before = model.predict(obs, deterministic=True)[0]
+    v_before = model.policy.predict_values({k: th.as_tensor(v[None]) for k, v in obs.items()}).item()
+    set_actor_trainable(model.policy, False)
+    model.learn(128)
+    set_actor_trainable(model.policy, True)
+    np.testing.assert_allclose(model.predict(obs, deterministic=True)[0], before, atol=1e-6)
+    v_after = model.policy.predict_values({k: th.as_tensor(v[None]) for k, v in obs.items()}).item()
+    assert v_after != v_before                                       # The critic did train
