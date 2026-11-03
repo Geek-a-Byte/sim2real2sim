@@ -324,6 +324,11 @@ times; `results/match/s2_selection/`). Net = pucks sent − received per minute:
   threats. With the old fixed sling (0.95 in 2.5 s from the gate), the rule
   calculates that blocking saves more than a shot clears, so it never slings: the
   race-of-rates condition says that this robot cannot win by slinging.
+- **The PPO selector learns to always sling.** One seed, 1 million steps
+  (`results/match/s2_ppo/`): 70% [66, 75] wins and +7.3 net/min, the same matches
+  as `greedy_sling`. With these placeholder times, slinging is the best strategy,
+  and the learned policy finds it without help. The comparison is worth repeating
+  with the measured times, where blocking can pay.
 
 The older results below use the old fixed sling (`shot.selection: fixed`).
 
