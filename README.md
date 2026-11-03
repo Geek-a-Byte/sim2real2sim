@@ -32,7 +32,11 @@ high-level policy chooses **block**, **sling** or **hold** against the opponent.
 | Milestone | Content | Status |
 |---|---|---|
 | M4 | Opponent model, event-level match env, primitives, rule-based baselines, match eval, MuJoCo match | Done. Waits for review |
-| M5 | Selector training, ablations, vulnerability window, ONNX export, latency benchmark | Not started (`deploy/` has the export and benchmark scripts only) |
+| S1–S5 | Sling puck as a dynamic task: outcome model, setup goals, physics calibration, selector against 4 opponents, deploy | Planned. See [docs/PLAN.md](docs/PLAN.md) |
+
+This branch (`slingpuck`) is the sling puck task: step 7 ("outcome layer for
+dynamic tasks") of the Sim2Real2Sim synthesis. The general any-task method is
+on the branch `generalized`.
 
 The earlier goalkeeper (Phase 1), targeted shot (Phase 2), system
 identification and digital twin code is not on this branch. It is on `main`
