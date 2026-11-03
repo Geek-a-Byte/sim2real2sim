@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 104 tests, about 10 s
+pytest -q                          # 106 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,7 +27,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 32 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 34 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
 | [`test_curriculum.py`](#test_curriculumpy) | 12 | General method: trial logs and curriculum |
 
@@ -240,6 +240,8 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_lifted_goals_pay_no_track_reward_without_a_grasp` | With only the track term on, a lifted goal pays 0 while the object is not held; a table goal pays (a push can reach it) | Otherwise hovering near the object collects track reward |
 | `test_grasped_starts_are_left_out_of_the_success_rate` | At the end of a grasped-start episode, `is_success` is `None` | SB3 then leaves it out, so the success graph shows only real starts |
 | `test_ik_does_not_depend_on_earlier_calls` | The same IK target gives bit-identical joints after an unrelated `jaw_gap` call | A leftover gripper value made seeded resets differ by 1e-15 and failed `check_env` |
+| `test_binary_gripper_closes_on_negative_and_opens_on_positive` | Any negative gripper action closes fully; any positive one opens to `gripper_open_m` (6 cm) | Run 3: with the continuous mapping the policy's gripper action stayed near 0 (half open) and dropped every grasped start |
+| `test_puck_can_be_grasped_and_lifted_with_env_actions_only` | A simple scripted controller that uses only the env's actions lifts the puck 4 cm in at least 3 of 6 positions | The task must stay possible in the policy's own action space |
 
 ---
 

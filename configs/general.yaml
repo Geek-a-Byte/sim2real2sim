@@ -16,6 +16,11 @@ robot:
   ee_rot_step_rad: 0.1        # ee: max tilt / roll change per step
   min_gripper_z_m: 0.004      # ee: the gripper site does not go lower than this above the table
   action_scale_rad: 0.05      # joint: max joint-target change per step for the 5 arm joints
+  # Gripper action. binary: a < 0 closes fully (full force), a >= 0 opens to gripper_open_m. Run 3 used the
+  # continuous form (a = 0 is half open; only a near -1 holds a puck): the policy's gripper action stayed
+  # near 0 and it released every grasped start at the first step. continuous: target = lo + (a + 1) / 2 * range
+  gripper_action: binary      # binary | continuous
+  gripper_open_m: 0.06        # binary: jaw opening when open (the widest object is the 3 cm cube)
 
 reach:
   # Reachable-goal filter (general/reachability.py)

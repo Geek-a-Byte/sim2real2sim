@@ -286,3 +286,38 @@ def test_ik_does_not_depend_on_earlier_calls(gcfg):
     kin.jaw_gap(1.5)                                      # Leaves the gripper joint at 1.5 in kin.d
     q2 = kin.ik(*target, None)[1]
     assert np.array_equal(q1, q2)
+
+
+# ------------------------------------------------------------------- binary gripper (after run 3)
+def test_binary_gripper_closes_on_negative_and_opens_on_positive(env):
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.3, 0.15), 0.0)})
+    env.step(np.r_[np.zeros(5), -0.05])
+    assert env.d.ctrl[5] == pytest.approx(env.ctrl_lo[5])                 # Any negative value: fully closed
+    env.step(np.r_[np.zeros(5), 0.05])
+    gap = env.checker.kin.jaw_gap(env.d.ctrl[5])
+    assert gap == pytest.approx(env.cfg["robot"]["gripper_open_m"], abs=1e-3)
+
+
+def test_puck_can_be_grasped_and_lifted_with_env_actions_only(gcfg, reach_map):
+    """The task is possible in the policy's own action space (a simple scripted controller)."""
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=0.0)
+    d = env.d
+
+    def to(target, grip, n=80):
+        for _ in range(n):
+            e = np.asarray(target) - d.site_xpos[env.site]
+            R = d.site_xmat[env.site].reshape(3, 3)
+            if np.linalg.norm(e) < 0.002 and abs(R[0, 0]) < 0.05:
+                break
+            env.step(np.r_[np.clip(e / 0.01, -1, 1), np.clip(5 * R[0, 0], -1, 1), 0, grip])
+
+    lifted = 0
+    for xy in ((0.25, 0.0), (0.22, 0.08), (0.30, -0.06), (0.20, -0.10), (0.28, 0.10), (0.18, 0.0)):
+        env.reset(seed=0, options={"task": TaskSpec("puck", xy, 0.0, [(xy[0], xy[1], 0.08, 0.0)])})
+        to((xy[0], xy[1], 0.04), 1.0)
+        to((xy[0], xy[1], 0.006), 1.0)
+        for _ in range(6):
+            env.step(np.r_[0, 0, 0, 0, 0, -1.0])
+        to((xy[0], xy[1], 0.08), -1.0)
+        lifted += env.object_pose()[0][2] > env.shape.half_height + 0.04
+    assert lifted >= 3

@@ -12,7 +12,8 @@ Observation (Dict):
 Action: 6 values in [-1, 1]. robot.action_space "ee" (default): gripper motion dx, dy, dz (x ee_pos_step_m),
 tilt and roll (x ee_rot_step_rad), mapped to the 5 arm joints by one damped least-squares step of the site
 Jacobian; the last value is the gripper target. "joint": 5 arm joint-target changes (x action_scale_rad) and
-the gripper target. The gripper site never goes below min_gripper_z_m.
+the gripper target. The gripper site never goes below min_gripper_z_m. The gripper value: robot.gripper_action
+"binary" (default: a < 0 closes fully, a >= 0 opens to gripper_open_m) or "continuous" (absolute target).
 
 Reward (staged, SO-101 PPO paper): reach + grasp + lift (while grasped) + track + success bonus, minus
 action-rate, joint-velocity and time penalties. Each stage pays more than the one before, so hovering
@@ -150,6 +151,8 @@ class GoalEnv(gym.Env):
                                          and self.m.geom_priority[g] == 1 and self.m.geom_contype[g])
                                for b in jaw_bodies)
         self.home = self._home_pose()
+        self.g_closed = self.ctrl_lo[5]                                       # Fully closed: full grip force
+        self.g_open = self.checker.kin.gripper_for_opening(self.cfg["robot"]["gripper_open_m"])
 
     def _home_pose(self) -> np.ndarray:
         kin = self.checker.kin
@@ -345,7 +348,10 @@ class GoalEnv(gym.Env):
             target[:5] += self.ee_to_joint(a[:5])
         else:
             target[:5] += a[:5] * self.cfg["robot"]["action_scale_rad"]
-        target[5] = self.ctrl_lo[5] + 0.5 * (a[5] + 1) * (self.ctrl_hi[5] - self.ctrl_lo[5])
+        if self.cfg["robot"]["gripper_action"] == "binary":
+            target[5] = self.g_closed if a[5] < 0 else self.g_open
+        else:
+            target[5] = self.ctrl_lo[5] + 0.5 * (a[5] + 1) * (self.ctrl_hi[5] - self.ctrl_lo[5])
         self.d.ctrl[:] = np.clip(target, self.ctrl_lo, self.ctrl_hi)
         mujoco.mj_step(self.m, self.d, nstep=self.n_sub)
         self.steps += 1
