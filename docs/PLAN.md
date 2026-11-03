@@ -13,6 +13,10 @@ each loop.
 **Contribution:** no earlier paper closes the loop with real failures for a
 task-agnostic policy.
 
+**Sources:** the synthesis and the notes on the 9 papers are in
+[papers/](papers/) (start with
+[synthesis-generalize-any-task-sim2real2sim.md](papers/synthesis-generalize-any-task-sim2real2sim.md)).
+
 ## Design decisions from the synthesis
 
 | Decision | From |
@@ -72,11 +76,14 @@ not on demos.
 ## Open questions
 
 - **Compute.** The synthesis says "you already run 4,096 MuJoCo envs". This
-  repository runs CPU MuJoCo with Stable-Baselines3, one env per process. G3
-  needs a parallel GPU sim (for example MuJoCo MJX) and a GPU.
+  repository runs CPU MuJoCo with Stable-Baselines3, one env per process. The
+  paper notes say that the 4,096 envs belong to the T3 (pushing) task. G3
+  needs that code, or a parallel GPU sim (for example MuJoCo MJX) and a GPU.
+- **Code for the other tasks.** The paper notes refer to T1 (tube to rack,
+  with 52 lift and 22 place real trials), T2 (the sling puck selector) and T3
+  (pushing). Only the sling puck code is in this repository.
 - **Task set.** Which tasks and objects to start with (the synthesis names
   tube to rack, pushing and puzzles).
 - **Camera.** The webcam model, its position, and its frame rate.
-- The `papers/` folder that the synthesis names is not in the repository.
-  The sling puck adaptation plan is in `docs/slingpuck-adaptation-plan.md` on
-  the `slingpuck` branch.
+- The SO-101 PPO paper note uses only the abstract. Its full text is needed
+  to check its results.
