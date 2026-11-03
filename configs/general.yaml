@@ -58,17 +58,17 @@ env:
   pregrasp_start_prob: 0.2    # Start with the open jaws around the object: the policy must close them
 
 reward:
-  # Staged dense reward (SO-101 PPO paper) plus a time penalty.
-  # Run 1 (action_rate 0.05, reach 0.5, joint actions): saturated actions, arm parked at its joint limits,
-  # no contact in 98% of episodes. Run 2 (pregrasp 0.5 for open jaws near the object): hovered next to the
-  # puck with open jaws, a two-jaw grasp in 0 of 40 episodes. Now each stage pays more than the one before.
-  reach: 1.0                  # 1 - tanh(d / reach_scale_m), d = gripper site to object center
-  reach_scale_m: 0.1
-  grasp: 2.0                  # Both jaws touch the object
-  lift: 2.0                   # While grasped, for a goal above the table: x min(height / lift_full_m, 1)
-  lift_full_m: 0.03           # Run 4 paid only above 1 cm: the policy pushed down and rose 0.5 cm on average
-  track: 2.0                  # For a lifted goal, only while grasped
-  success: 10.0
+  # reach (absolute, small) + grasp (small) + progress (potential-based) + success, minus penalties.
+  # History: run 1 saturated its actions; run 2 hovered with open jaws (pregrasp paid for that); runs 3-5
+  # (grasp 2.0 + lift + absolute track) learned to hold the puck still: holding paid 3 per step with no
+  # risk, and reaching a goal lowered the absolute track reward (the next goal is farther). Progress pays
+  # only for object motion toward the goal, so holding or hovering pays nothing extra, a lift toward a
+  # lifted goal pays at once, and reaching a goal costs nothing. Reach is progress-based too: with an absolute
+  # reach (1.5 per step with the grasp), one drop after 3 reached goals cost more than the 3 goals earned.
+  reach: 0.5                  # Per cm that the gripper site gets closer to the object center this step
+  grasp: 0.2                  # Per step with both jaws on the object (small: it must not pay for holding still)
+  progress: 2.0               # Per cm that the mean point distance to the goal falls this step (negative if it grows)
+  success: 20.0
   action_rate: 0.005
   joint_vel: 0.001
   time: 0.01

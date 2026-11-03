@@ -15,10 +15,11 @@ Jacobian; the last value is the gripper target. "joint": 5 arm joint-target chan
 the gripper target. The gripper site never goes below min_gripper_z_m. The gripper value: robot.gripper_action
 "binary" (default: a < 0 closes fully, a >= 0 opens to gripper_open_m) or "continuous" (absolute target).
 
-Reward (staged, SO-101 PPO paper): reach + grasp + lift (while grasped) + track + success bonus, minus
-action-rate, joint-velocity and time penalties. Each stage pays more than the one before, so hovering
-near the object (reach only) is never the best place to stay. For a lifted goal, track pays only while
-the object is grasped; a table goal can also be reached by a push.
+Reward: reach + grasp (small, per step held) + progress + success bonus, minus action-rate, joint-velocity
+and time penalties. reach = reward.reach x (cm that the gripper got closer to the object this step), progress =
+reward.progress x (cm that the mean point distance to the goal fell this step). Both are potential-based
+shapings: no state pays just for being in it, so holding or hovering earns nothing, a lift toward a lifted
+goal pays at once, and a new chained goal restarts the count (no loss for reaching a goal).
 
 Assisted starts (training only), a reverse curriculum over the start state:
   grasped   (env.grasped_start_prob)  the object is already held by a top-down IK grasp: learn lift, carry, place
@@ -206,6 +207,7 @@ class GoalEnv(gym.Env):
 
         R = self.d.site_xmat[self.site].reshape(3, 3)
         self.ee_x, self.ee_z = R[:, 0].copy(), R[:, 2].copy()     # Target gripper orientation (ee actions)
+        self.prev_d_reach = float(np.linalg.norm(self.d.site_xpos[self.site] - self.object_pose()[0]))
         self.goal_queue = list(self.task.goals)
         self.goal = None
         self.steps, self.goals_reached = 0, 0
@@ -293,6 +295,7 @@ class GoalEnv(gym.Env):
             goal = self.goal if self.goal is not None else (float(p[0]), float(p[1]) + 1.0, float(p[2]), float(yaw))
         self.goal = (*goal[:3], self.shape.equivalent_yaw(goal[3], yaw))
         self.goal_steps, self.goal_contact, self.goal_lifted = 0, False, False
+        self.prev_d_goal = float(np.linalg.norm(self._object_points() - self._goal_points(), axis=1).mean())
         mid = self.m.body(f"goal_{self.task.obj}").mocapid[0]
         self.d.mocap_pos[mid] = self.goal[:3]
         self.d.mocap_quat[mid] = yaw_quat(self.goal[3])
@@ -380,11 +383,11 @@ class GoalEnv(gym.Env):
         self.goal_lifted |= lifted
 
         w = self.w
-        track_on = grasped or not lift_needed          # A lifted goal is tracked only while the object is held
-        reward = (w["reach"] * (1 - np.tanh(d_reach / w["reach_scale_m"]))
-                  + w["grasp"] * grasped
-                  + w["lift"] * (lift_needed and grasped) * float(np.clip((pos[2] - tz) / w["lift_full_m"], 0, 1))
-                  + w["track"] * track_on * (1 - np.tanh(d_goal / 0.05))
+        progress = (self.prev_d_goal - d_goal) / 0.01                # cm closer to the goal this step
+        self.prev_d_goal = d_goal
+        reach = (self.prev_d_reach - d_reach) / 0.01                 # cm closer to the object this step
+        self.prev_d_reach = d_reach
+        reward = (w["reach"] * reach + w["grasp"] * grasped + w["progress"] * progress
                   - w["action_rate"] * float(np.sum((a - self.prev_action) ** 2))
                   - w["joint_vel"] * float(np.sum(self.d.qvel[self.dadr] ** 2)) - w["time"])
         self.prev_action = a

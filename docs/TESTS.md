@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 108 tests, about 10 s
+pytest -q                          # 110 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,7 +27,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 36 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 38 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
 | [`test_curriculum.py`](#test_curriculumpy) | 12 | General method: trial logs and curriculum |
 
@@ -236,14 +236,16 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_is_success_at_the_episode_end_reports_reached_goals` | At the last step, `is_success` is true if the episode reached a goal, and false if not. `goal_reached_now` marks the step of each success | SB3's `rollout/success_rate` reads `is_success` from the last step only; it was always 0 before |
 | `test_home_pose_follows_the_tallest_training_object` | With pucks only, the home gripper is top-down and lower; with all objects, it is above the 8 cm tube | A low top-down start makes the first grasp much easier for a puck |
 | `test_grasped_starts_hold_the_object_through_a_lift` | With grasped starts on, at least 8 of 10 resets hold the puck, and nearly all of them lift it more than 4 cm | so101.xml's elliptic friction cones dropped the puck in 16 of 18 lifts; pyramidal cones hold it |
-| `test_a_grasp_pays_more_than_hovering` | A grasp pays more than twice the reward of hovering 2 cm above the puck with open jaws | Run 2 stayed in the hover optimum |
-| `test_lifted_goals_pay_no_track_reward_without_a_grasp` | With only the track term on, a lifted goal pays 0 while the object is not held; a table goal pays (a push can reach it) | Otherwise hovering near the object collects track reward |
+| `test_a_grasp_pays_more_than_hovering` | A held puck pays more per step than hovering 2 cm above it with open jaws | Run 2 stayed in the hover optimum |
 | `test_grasped_starts_are_left_out_of_the_success_rate` | At the end of a grasped-start episode, `is_success` is `None` | SB3 then leaves it out, so the success graph shows only real starts |
 | `test_ik_does_not_depend_on_earlier_calls` | The same IK target gives bit-identical joints after an unrelated `jaw_gap` call | A leftover gripper value made seeded resets differ by 1e-15 and failed `check_env` |
 | `test_binary_gripper_closes_on_negative_and_opens_on_positive` | Any negative gripper action closes fully; any positive one opens to `gripper_open_m` (6 cm) | Run 3: with the continuous mapping the policy's gripper action stayed near 0 (half open) and dropped every grasped start |
 | `test_puck_can_be_grasped_and_lifted_with_env_actions_only` | A simple scripted controller that uses only the env's actions lifts the puck 4 cm in at least 3 of 6 positions | The task must stay possible in the policy's own action space |
 | `test_pregrasp_starts_leave_open_jaws_around_the_object` | A pregrasp start puts the open jaws around the puck (no contact, gripper within 1 cm), and closing there gives a grasp | Run 4: the policy approached with closed jaws in 100% of episodes; this start teaches when to close |
-| `test_lift_reward_grows_with_height` | While grasped, the lift reward pays from the first millimetre and grows up to its full weight | Run 4 paid only above 1 cm; the policy pushed down and never found it |
+| `test_progress_pays_nothing_for_holding_still` | With only the progress term on, holding the puck still pays about 0 | Runs 3–5 learned to hold still because holding paid 3 per step |
+| `test_progress_pays_for_a_lift_toward_a_lifted_goal` | Every step up toward a lifted goal pays, and the sum equals the weight times the distance gained (potential-based) | The lift is paid at once, without a separate lift term |
+| `test_reaching_a_goal_does_not_lower_the_reward` | A reached goal pays the success bonus, and the farther next goal costs no reward | With an absolute track reward, reaching a goal lowered the reward |
+| `test_returns_rank_behaviours_in_the_right_order` | Scripted episodes rank idle < hover < hold still < carry to goals (even with a drop at the end) | The property that each failed run broke; checked before any training |
 
 ---
 

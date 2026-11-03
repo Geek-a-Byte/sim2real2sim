@@ -254,19 +254,7 @@ def test_a_grasp_pays_more_than_hovering(gcfg, reach_map):
     for _ in range(15):                                  # Down to 2 cm above the puck, jaws open
         e = np.array([0.25, 0.0, 0.02]) - hover.d.site_xpos[hover.site]
         r_hover = hover.step(np.r_[np.clip(e / 0.01, -1, 1), 0, 0, 0.3])[1]
-    assert r_held > 2 * r_hover
-
-
-def test_lifted_goals_pay_no_track_reward_without_a_grasp(gcfg, reach_map):
-    env = GoalEnv(gcfg, reach_map=reach_map, grasped_start_prob=0.0)
-    w = env.w
-    env.w = {**w, "reach": 0.0, "time": 0.0, "action_rate": 0.0, "joint_vel": 0.0}
-    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.05, 0.0)])})
-    r_lifted_goal = env.step(np.zeros(6))[1]
-    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.27, 0.0, 0.015, 0.0)])})
-    r_table_goal = env.step(np.zeros(6))[1]
-    env.w = w
-    assert r_lifted_goal == pytest.approx(0.0, abs=1e-9) and r_table_goal > 0.1   # A push can do a table goal
+    assert r_held > r_hover + 0.1                       # Hovering pays about 0; a held object pays the grasp term
 
 
 def test_grasped_starts_are_left_out_of_the_success_rate(gcfg, reach_map):
@@ -341,12 +329,73 @@ def test_pregrasp_starts_leave_open_jaws_around_the_object(gcfg, reach_map):
     assert n >= 7 and closed_grasp >= n - 2                         # Closing there gives a grasp
 
 
-def test_lift_reward_grows_with_height(gcfg, reach_map):
-    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+# ------------------------------------------------------------------- progress reward (after run 5)
+def _only_progress(env):
     w = env.w
-    env.w = {**w, "reach": 0.0, "grasp": 0.0, "track": 0.0, "time": 0.0, "action_rate": 0.0, "joint_vel": 0.0}
-    _, info = env.reset(seed=1, options={"task": TaskSpec("puck", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.10, 0.0)])})
+    env.w = {**w, "reach": 0.0, "grasp": 0.0, "time": 0.0, "action_rate": 0.0, "joint_vel": 0.0}
+    return w
+
+
+def test_progress_pays_nothing_for_holding_still(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    w = _only_progress(env)
+    _, info = env.reset(seed=1, options={"task": TaskSpec("puck", (0.25, 0.0), 0.0, [(0.30, 0.05, 0.08, 0.0)])})
     assert info["start"] == "grasped"
-    rewards = [env.step(np.r_[0, 0, 0.4, 0, 0, -1.0])[1] for _ in range(8)]
+    r = [env.step(np.r_[0, 0, 0, 0, 0, -1.0])[1] for _ in range(10)]
     env.w = w
-    assert 0 < rewards[1] < rewards[4] <= w["lift"] + 1e-9          # Pays from the first mm, up to the full weight
+    assert abs(sum(r[2:])) < 0.5                                    # Held still: no progress
+
+
+def test_progress_pays_for_a_lift_toward_a_lifted_goal(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"], grasped_start_prob=1.0)
+    w = _only_progress(env)
+    env.reset(seed=1, options={"task": TaskSpec("puck", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.10, 0.0)])})
+    d0 = env._info()["d_goal"]
+    r = [env.step(np.r_[0, 0, 1, 0, 0, -1.0])[1] for _ in range(4)]
+    d1 = env._info()["d_goal"]
+    env.w = w
+    assert all(x > 0 for x in r[1:])                                # Every step up pays
+    assert sum(r) == pytest.approx(w["progress"] * (d0 - d1) / 0.01, rel=1e-6)   # Potential-based: sums exactly
+
+
+def test_reaching_a_goal_does_not_lower_the_reward(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"])
+    w = _only_progress(env)
+    env.reset(seed=0, options={"task": TaskSpec("puck", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.0051, 0.0),
+                                                                            (0.35, 0.1, 0.0051, 0.0)])})
+    r_goal = env.step(np.zeros(6))[1]                               # First goal reached on this step
+    r_next = env.step(np.zeros(6))[1]                               # The far next goal costs no reward
+    env.w = w
+    assert r_goal == pytest.approx(w["success"], abs=0.1) and abs(r_next) < 0.1   # Settling: < 0.1
+
+
+
+def test_returns_rank_behaviours_in_the_right_order(gcfg, reach_map):
+    """The reward must rank idle < hover < hold still < carry to goals (runs 2-5 each broke this order)."""
+    task = TaskSpec("puck", (0.25, 0.0), 0.0, [(0.28, 0.04, 0.06, 0.0)])
+
+    def episode(start, policy, n=150):
+        env = GoalEnv(gcfg, reach_map=reach_map, objects=["puck"],
+                      grasped_start_prob=1.0 if start == "grasped" else 0.0)
+        env.reset(seed=1, options={"task": task})
+        total = 0.0
+        for _ in range(n):
+            _, r, te, tr, _ = env.step(policy(env))
+            total += r
+            if te or tr:
+                break
+        return total
+
+    def hover(env):
+        e = np.array([0.25, 0.0, 0.02]) - env.d.site_xpos[env.site]
+        return np.r_[np.clip(e / 0.01, -1, 1), 0, 0, 0.3]
+
+    def carry(env):
+        e = np.array(env.goal[:3]) - env.object_pose()[0]
+        return np.r_[np.clip(e / 0.01, -1, 1), 0, 0, -1.0] if np.linalg.norm(e) > 0.003 else np.r_[0, 0, 0, 0, 0, -1.0]
+
+    idle = episode("normal", lambda env: np.zeros(6))
+    hov = episode("normal", hover)
+    hold = episode("grasped", lambda env: np.r_[0, 0, 0, 0, 0, -1.0])
+    car = episode("grasped", carry)
+    assert idle < hov < hold < car
