@@ -325,6 +325,9 @@ class GoalEnv(gym.Env):
         terminated = self.object_lost(pos, grasped)
         truncated = not terminated and (self.steps >= self.e["max_steps"] or self.no_goal)
         info = self._info(d_goal=d_goal, success=success, lift_needed=lift_needed)
+        info["goal_reached_now"] = bool(success)
+        if terminated or truncated:   # SB3 reads is_success from the last step: did the episode reach a goal?
+            info["is_success"] = self.goals_reached >= 1
         if terminated:
             info["failure"] = "object_lost"
         return self._obs(), float(reward), terminated, truncated, info

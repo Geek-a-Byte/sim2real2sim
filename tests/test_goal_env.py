@@ -203,3 +203,17 @@ def test_home_gripper_is_above_every_object(env, shapes):
     tips = [env.m.geom(n).id for n in ("fixed_jaw_sph_tip1", "moving_jaw_sph_tip1")]
     lowest = min(env.d.geom_xpos[g][2] for g in tips)
     assert lowest > max(2 * s.half_height for s in shapes.values()) + 0.02
+
+
+def test_is_success_at_the_episode_end_reports_reached_goals(gcfg, reach_map):
+    """SB3's rollout/success_rate reads is_success from the last step only."""
+    cfg = {**gcfg, "env": {**gcfg["env"], "max_steps": 3}}
+    env = GoalEnv(cfg, reach_map=reach_map)
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.25, 0.0, 0.015, 0.0),
+                                                                            (0.35, 0.1, 0.015, 0.0)])})
+    infos = [env.step(np.zeros(6))[4] for _ in range(3)]
+    assert infos[0]["goal_reached_now"] and not infos[1]["goal_reached_now"]
+    assert infos[-1]["is_success"]
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.25, 0.0), 0.0, [(0.35, 0.1, 0.015, 0.0)])})
+    infos = [env.step(np.zeros(6))[4] for _ in range(3)]
+    assert not infos[-1]["is_success"]
