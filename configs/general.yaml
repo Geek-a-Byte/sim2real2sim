@@ -6,7 +6,11 @@ robot:
   table_z_m: 0.0
   sim_dt_s: 0.002
   control_dt_s: 0.05          # 20 Hz policy
-  action_scale_rad: 0.05      # Max joint-target change per step for the 5 arm joints
+  action_space: ee            # ee: gripper motion (dx, dy, dz, tilt, roll) through differential IK | joint
+  ee_pos_step_m: 0.01         # ee: max gripper move per step (20 cm/s)
+  ee_rot_step_rad: 0.1        # ee: max tilt / roll change per step
+  min_gripper_z_m: 0.004      # ee: the gripper site does not go lower than this above the table
+  action_scale_rad: 0.05      # joint: max joint-target change per step for the 5 arm joints
 
 reach:
   # Reachable-goal filter (general/reachability.py)
@@ -40,13 +44,18 @@ env:
   goal_tries: 30              # Resamples until a goal passes the reachable-goal filter
 
 reward:
-  # Staged dense reward (SO-101 PPO paper) plus a time penalty
-  reach: 0.5
-  grasp: 0.5
-  lift: 0.5
+  # Staged dense reward (SO-101 PPO paper) plus a time penalty.
+  # Run 1 (action_rate 0.05, reach 0.5, joint actions) found a local optimum: saturated actions, the arm
+  # parked at its joint limits, no contact in 98% of episodes. Hence the stronger reach and the pregrasp stage.
+  reach: 1.0                  # 1 - tanh(d / reach_scale_m), d = gripper site to object center
+  reach_scale_m: 0.1
+  pregrasp: 0.5               # Gripper within pregrasp_dist_m of the object, jaws open
+  pregrasp_dist_m: 0.03
+  grasp: 1.0                  # Both jaws touch the object
+  lift: 1.0                   # Lifted while grasped, when the goal is above the table
   track: 2.0
   success: 10.0
-  action_rate: 0.05
+  action_rate: 0.005
   joint_vel: 0.001
   time: 0.01
 

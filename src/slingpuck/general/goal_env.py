@@ -9,10 +9,13 @@ Observation (Dict):
   points      (n_points, 7)  paired points; the student mode masks and adds noise (webcam view)
   proprio     (18,)          joint positions, joint velocities / 10, last action
   privileged  (23,)          object pose and velocity, goal, jaw contacts, gripper site (critic / teacher only)
-Action: 6 values in [-1, 1]: arm joint-target changes (x action_scale_rad) and the gripper target.
+Action: 6 values in [-1, 1]. robot.action_space "ee" (default): gripper motion dx, dy, dz (x ee_pos_step_m),
+tilt and roll (x ee_rot_step_rad), mapped to the 5 arm joints by one damped least-squares step of the site
+Jacobian; the last value is the gripper target. "joint": 5 arm joint-target changes (x action_scale_rad) and
+the gripper target. The gripper site never goes below min_gripper_z_m.
 
-Reward (staged, SO-101 PPO paper): reach + grasp + lift (while grasped) + track + success bonus, minus
-action-rate, joint-velocity and time penalties.
+Reward (staged, SO-101 PPO paper): reach + pregrasp (near, jaws open) + grasp + lift (while grasped) + track
++ success bonus, minus action-rate, joint-velocity and time penalties.
 
 Symmetric objects: the goal yaw is replaced by the equivalent yaw nearest to the object's yaw (a cube turned
 90 deg, a bar turned 180 deg, a cylinder at any yaw is the same pose), so the point distance measures the pose.
@@ -35,8 +38,20 @@ from src.slingpuck.general.common import (ARM_JOINTS, SO101_XML, ObjectShape, ob
                                           quat_to_yaw, wrap_angle, yaw_matrix, yaw_quat)
 from src.slingpuck.general.reachability import SEED_POSES, ReachabilityChecker, ReachabilityMap, approach_dir
 
-HOME_GRASP_POINT = (0.22, 0.0, 0.08)    # Top-down reach ends at about 8 cm height
+HOME_GRASP_POINT = (0.20, 0.0, 0.12)    # Above the tallest object (tube top 8 cm); top-down cannot go this high,
+HOME_TILT_DEG = 15.0                    # so the home gripper is tilted 15 deg
+ORIENT_GAIN, ORIENT_WEIGHT = 0.5, 0.02  # ee actions: orientation correction per step, and its weight (m/rad)
+WINDUP_LIMIT_RAD = 0.1                 # Max joint-target lead over the measured joint (no windup at contacts)
 STAGES = ("reach", "grasp", "transport", "place")
+
+
+def _rotate(v, axis, angle: float) -> np.ndarray:
+    """Rodrigues rotation of v about a unit axis."""
+    if angle == 0.0:
+        return np.asarray(v, float)
+    k = np.asarray(axis, float) / np.linalg.norm(axis)
+    v = np.asarray(v, float)
+    return v * np.cos(angle) + np.cross(k, v) * np.sin(angle) + k * (k @ v) * (1 - np.cos(angle))
 
 
 @dataclass
@@ -120,7 +135,7 @@ class GoalEnv(gym.Env):
                                for b in jaw_bodies)
         kin = self.checker.kin
         for q0 in SEED_POSES:
-            ok, q, *_ = kin.ik(HOME_GRASP_POINT, approach_dir(HOME_GRASP_POINT, 0.0), None, q0=q0)
+            ok, q, *_ = kin.ik(HOME_GRASP_POINT, approach_dir(HOME_GRASP_POINT, HOME_TILT_DEG), None, q0=q0)
             if ok:
                 break
         if not ok:
@@ -154,6 +169,8 @@ class GoalEnv(gym.Env):
         self.d.ctrl[:] = self.home
         mujoco.mj_forward(self.m, self.d)
 
+        R = self.d.site_xmat[self.site].reshape(3, 3)
+        self.ee_x, self.ee_z = R[:, 0].copy(), R[:, 2].copy()     # Target gripper orientation (ee actions)
         self.goal_queue = list(self.task.goals)
         self.goal = None
         self.steps, self.goals_reached = 0, 0
@@ -243,10 +260,35 @@ class GoalEnv(gym.Env):
                     touch[k] = True
         return touch
 
+    def ee_to_joint(self, u) -> np.ndarray:
+        """Joint-target change for a gripper motion u = (dx, dy, dz, tilt, roll) in [-1, 1]."""
+        r = self.cfg["robot"]
+        site_p = self.d.site_xpos[self.site]
+        v = np.asarray(u[:3]) * r["ee_pos_step_m"]
+        floor = r["table_z_m"] + r["min_gripper_z_m"]
+        v[2] = max(v[2], floor - site_p[2])                    # Never below the floor
+        R = self.d.site_xmat[self.site].reshape(3, 3)
+        t = np.array([-site_p[1], site_p[0], 0.0]) / max(np.hypot(site_p[0], site_p[1]), 1e-6)  # Tilt axis
+        # Target orientation: tilt and roll turn it; every step corrects the gripper toward it (no drift)
+        self.ee_x = _rotate(_rotate(self.ee_x, t, u[3] * r["ee_rot_step_rad"]), self.ee_x, 0.0)
+        self.ee_z = _rotate(_rotate(self.ee_z, t, u[3] * r["ee_rot_step_rad"]), self.ee_x, u[4] * r["ee_rot_step_rad"])
+        w = ORIENT_GAIN * (np.cross(R[:, 0], self.ee_x) + np.cross(R[:, 2], self.ee_z))
+        jacp, jacr = np.zeros((3, self.m.nv)), np.zeros((3, self.m.nv))
+        mujoco.mj_jacSite(self.m, self.d, jacp, jacr, self.site)
+        w_rot = ORIENT_WEIGHT                                  # Position has priority over orientation
+        J = np.vstack([jacp[:, self.dadr[:5]], w_rot * jacr[:, self.dadr[:5]]])
+        dq = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(6), np.concatenate([v, w_rot * w]))
+        return np.clip(dq, -0.2, 0.2)
+
     def step(self, action):
         a = np.clip(np.asarray(action, float), -1, 1)
         target = self.d.ctrl.copy()
-        target[:5] += a[:5] * self.cfg["robot"]["action_scale_rad"]
+        q = self.d.qpos[self.qadr[:5]]                # Keep the last target (no gravity sag), but no further than
+        target[:5] = np.clip(target[:5], q - WINDUP_LIMIT_RAD, q + WINDUP_LIMIT_RAD)   # this from the joints
+        if self.cfg["robot"]["action_space"] == "ee":
+            target[:5] += self.ee_to_joint(a[:5])
+        else:
+            target[:5] += a[:5] * self.cfg["robot"]["action_scale_rad"]
         target[5] = self.ctrl_lo[5] + 0.5 * (a[5] + 1) * (self.ctrl_hi[5] - self.ctrl_lo[5])
         self.d.ctrl[:] = np.clip(target, self.ctrl_lo, self.ctrl_hi)
         mujoco.mj_step(self.m, self.d, nstep=self.n_sub)
@@ -266,8 +308,12 @@ class GoalEnv(gym.Env):
         self.goal_lifted |= lifted
 
         w = self.w
-        reward = (w["reach"] * (1 - np.tanh(d_reach / 0.1)) + w["grasp"] * grasped
-                  + w["lift"] * (lifted and lift_needed and grasped) + w["track"] * (1 - np.tanh(d_goal / 0.05))
+        g_lo, g_hi = self.ctrl_lo[5], self.ctrl_hi[5]
+        jaws_open = (self.d.qpos[self.qadr[5]] - g_lo) / (g_hi - g_lo)          # 0 closed, 1 fully open
+        pregrasp = (d_reach < w["pregrasp_dist_m"]) * jaws_open
+        reward = (w["reach"] * (1 - np.tanh(d_reach / w["reach_scale_m"])) + w["pregrasp"] * pregrasp
+                  + w["grasp"] * grasped + w["lift"] * (lifted and lift_needed and grasped)
+                  + w["track"] * (1 - np.tanh(d_goal / 0.05))
                   - w["action_rate"] * float(np.sum((a - self.prev_action) ** 2))
                   - w["joint_vel"] * float(np.sum(self.d.qvel[self.dadr] ** 2)) - w["time"])
         self.prev_action = a

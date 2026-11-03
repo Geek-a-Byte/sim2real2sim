@@ -6,7 +6,7 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 89 tests, about 10 s
+pytest -q                          # 96 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
@@ -27,7 +27,7 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
 | [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
-| [`test_goal_env.py`](#test_goal_envpy) | 18 | General method: goal-conditioned env |
+| [`test_goal_env.py`](#test_goal_envpy) | 25 | General method: goal-conditioned env |
 | [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
 | [`test_curriculum.py`](#test_curriculumpy) | 11 | General method: trial logs and curriculum |
 
@@ -229,6 +229,10 @@ Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
 | `test_symmetric_objects_reach_turned_goals` (4 cases) | A cube turned 90°, a bar turned 180° and a tube at any yaw are at their goal. A bar turned 90° is not | Correct placements of symmetric objects must not count as failures |
 | `test_jaw_contacts_use_only_jaw_geoms` | The grasp check uses only the jaw geoms, not the wrist motor box in the same body | Otherwise a touch with the wrist counts as a grasp |
 | `test_lift_reward_needs_a_grasp` | An object in the air that is not held gets no lift reward | Otherwise knocking the object up pays |
+| `test_ee_actions_move_the_gripper_as_commanded` (4 cases) | 5 steps of ±x or ±y move the gripper 5 cm (±6 mm) along that axis, and less than 8 mm on the others | The end-effector action space must do what it says |
+| `test_ee_hold_does_not_drift` | 40 steps of zero action move the gripper less than 1 mm | Targets from the measured joints let gravity sag add up (4.9 mm in 40 steps in a first version) |
+| `test_pushing_into_the_table_has_no_windup_and_respects_the_floor` | After a tilt to top-down and 60 steps down, the gripper is above the table and below 1.2 cm, and the joint targets stay within 0.35 rad of the joints | Low enough for a 1 cm puck; the old controller wound up 2.2 rad against the table |
+| `test_home_gripper_is_above_every_object` | At reset, the jaw tips are more than 2 cm above the tallest object | A low home pose started the gripper inside the 8 cm tube |
 
 ---
 

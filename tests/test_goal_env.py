@@ -160,3 +160,46 @@ def test_lift_reward_needs_a_grasp(gcfg, reach_map):
     _, r, *_ = env.step(np.zeros(6))
     env.w = w
     assert r < 100.0
+
+
+# ------------------------------------------------------------- end-effector actions (training run 2)
+@pytest.mark.parametrize("u, axis", [((1, 0, 0), 0), ((-1, 0, 0), 0), ((0, 1, 0), 1), ((0, -1, 0), 1)])
+def test_ee_actions_move_the_gripper_as_commanded(gcfg, reach_map, u, axis):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.3, 0.15), 0.0)})
+    for _ in range(8):           # Out from the home pose first: near the base at 12 cm, -x is out of reach
+        env.step(np.r_[1, 0, 0, 0, 0, 0])
+    p0 = env.d.site_xpos[env.site].copy()
+    for _ in range(5):
+        env.step(np.r_[u, 0.0, 0.0, 0.0])
+    dp = env.d.site_xpos[env.site] - p0
+    assert dp[axis] == pytest.approx(5 * gcfg["robot"]["ee_pos_step_m"] * u[axis], abs=0.006)
+    assert np.linalg.norm(np.delete(dp, axis)) < 0.008
+
+
+def test_ee_hold_does_not_drift(env):
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.3, 0.15), 0.0)})
+    p0 = env.d.site_xpos[env.site].copy()
+    for _ in range(40):
+        env.step(np.zeros(6))
+    assert np.linalg.norm(env.d.site_xpos[env.site] - p0) < 0.001
+
+
+def test_pushing_into_the_table_has_no_windup_and_respects_the_floor(gcfg, reach_map):
+    env = GoalEnv(gcfg, reach_map=reach_map)
+    env.reset(seed=0, options={"task": TaskSpec("cube", (0.3, 0.15), 0.0)})
+    for _ in range(3):
+        env.step(np.r_[0, 0, 0, 1, 0, 0])                 # Tilt to top-down
+    for _ in range(60):
+        env.step(np.r_[0, 0, -1, 0, 0, 0])
+    z = env.d.site_xpos[env.site][2]
+    assert gcfg["robot"]["table_z_m"] < z < 0.012           # Low enough for a 1 cm puck
+    lead = np.abs(env.d.ctrl[:5] - env.d.qpos[env.qadr[:5]]).max()
+    assert lead < 0.35                                      # Targets stay near the joints (windup was 2.2 rad)
+
+
+def test_home_gripper_is_above_every_object(env, shapes):
+    env.reset(seed=0)
+    tips = [env.m.geom(n).id for n in ("fixed_jaw_sph_tip1", "moving_jaw_sph_tip1")]
+    lowest = min(env.d.geom_xpos[g][2] for g in tips)
+    assert lowest > max(2 * s.half_height for s in shapes.values()) + 0.02

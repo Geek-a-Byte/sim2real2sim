@@ -77,6 +77,9 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--pool-size", type=int)
     p.add_argument("--resume", help="final_model.zip to continue from")
+    p.add_argument("--log-std-init", type=float, default=-1.0,
+                   help="Start action noise (std = exp of this; -1 gives 0.37). Run 1 used 0 (std 1): the policy "
+                        "saturated its actions to avoid the action-rate penalty")
     args = p.parse_args()
 
     cfg = load_general_config()
@@ -98,7 +101,7 @@ def main():
     else:
         model = PPO(PairedPointPolicy, env, n_steps=512, batch_size=1024, n_epochs=5, gamma=0.99,
                     learning_rate=3e-4, ent_coef=0.0, seed=args.seed, verbose=0,
-                    policy_kwargs={"net_arch": [256, 256]},
+                    policy_kwargs={"net_arch": [256, 256], "log_std_init": args.log_std_init},
                     tensorboard_log=str(REPO_ROOT / "tensorboard_logs" / "general"))
     callbacks = CallbackList([
         CurriculumCallback(cur, run_dir / "sim_trials.jsonl", args.pool_size or cfg["curriculum"]["pool_size"]),
