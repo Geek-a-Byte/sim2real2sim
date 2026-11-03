@@ -6,13 +6,13 @@ check is important.
 Run all tests from the project root folder:
 
 ```bash
-pytest -q                          # 49 tests, about 10 s
+pytest -q                          # 78 tests, about 10 s
 pytest -q tests/test_match.py      # one file
 pytest -q -k hysteresis            # tests whose name contains "hysteresis"
 ```
 
-The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
-`mujoco` package. If it is not installed, pytest skips these tests.
+The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py` and the four
+`general` test files) need the `mujoco` package. If it is not installed, pytest skips these tests.
 
 ## Contents
 
@@ -26,6 +26,10 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
 | [`test_asymmetric_policy.py`](#test_asymmetric_policypy) | 1 | Asymmetric actor-critic policy |
 | [`test_slingpuck_scene.py`](#test_slingpuck_scenepy) | 6 | MuJoCo scene |
 | [`test_match_mujoco.py`](#test_match_mujocopy) | 3 | MuJoCo match |
+| [`test_reachability.py`](#test_reachabilitypy) | 9 | General method: reachable-goal filter |
+| [`test_goal_env.py`](#test_goal_envpy) | 9 | General method: goal-conditioned env |
+| [`test_paired_point_policy.py`](#test_paired_point_policypy) | 2 | General method: paired-point policy |
+| [`test_curriculum.py`](#test_curriculumpy) | 9 | General method: trial logs and curriculum |
 
 ---
 
@@ -34,6 +38,9 @@ The MuJoCo tests (`test_slingpuck_scene.py`, `test_match_mujoco.py`) need the
 | Fixture | What it gives |
 |---|---|
 | `cfg` | The merged config `load_config("v0")`. Scope: one per test session. Most tests use it |
+| `gcfg` | `configs/general.yaml` with an 8 cm reachability voxel (the real map uses 2 cm), so that the map builds in a few seconds |
+| `reach_map` | The coarse reachability map built from `gcfg`. Scope: one per test session |
+| `shapes` | The task objects from `gcfg` (cube, bar, tube, puck) |
 
 The tests use version `v0` on purpose. A new `physics_params_v1.yaml` does not
 change the test results.
@@ -180,6 +187,71 @@ highest puck speed and whether each player held a puck.
 | `test_colours_split_five_and_five` | 5 black pucks start on the robot side. 5 white pucks start on the human side | The start state must match the game rules |
 | `test_both_players_shoot_and_physics_stays_sane` | Both players hold and shoot at least one puck. The highest puck speed is below 6 m/s. All pucks stay on the board. The count is 10 | Shows that the scripted plan works. Catches a physics blow-up (a blow-up gives speeds of tens to thousands of m/s) |
 | `test_robot_guard_pose_blocks_the_gate` | At the start, the gripper site is at the guard pose (within 3 mm). The guard pose is centered (x = 0) on the agent side (y < 0) | The closed gripper must stand in the gate to block shots |
+
+---
+
+## `test_reachability.py`
+
+Code under test: `src/slingpuck/general/reachability.py`. Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_ik_recovers_poses_from_forward_kinematics` | For 20 random joint poses, IK finds the same gripper position, approach and jaw axis in at least 18 cases | The filter is only as good as its IK |
+| `test_ik_stays_inside_joint_limits` | For a target out of reach, IK fails and every joint stays inside its range | A "reachable" answer must never need a joint past its limit |
+| `test_gripper_opening_is_monotonic` | The jaw gap grows with the gripper joint. The maximum is the opening at the upper limit. `gripper_for_opening(0.04)` gives a 4 cm gap | Part (c) of the check: the object must fit between the jaws |
+| `test_approach_directions_are_in_the_radial_plane` | Every approach direction is a unit vector with no sideways part. Tilt 0 is straight down | Part (b): a 5-DoF arm cannot approach from the side of its radial plane |
+| `test_checker_accepts_near_goals_and_names_the_reason_for_others` | A cube at 25 cm is reachable. At 60 cm and behind the base, the reason is `ik`. A 16 cm wide box gives `gripper_width` | The reason is logged with each failure, so it must be right |
+| `test_top_down_grasp_closes_across_the_narrow_side` | A 7 × 2.4 cm bar is grasped top-down, with the jaws closing across its 2.4 cm side | The grasp that the check accepts must be one that can hold the object |
+| `test_grasp_pose_has_no_collision` | The accepted grasp pose has no robot-robot or robot-table collision | Part (a): no collision |
+| `test_map_agrees_with_the_exact_check` | For 30 random points, the map and the exact check agree in at least 22 cases (coarse 8 cm test map). A far point is unreachable in the map | The fast map is used inside the envs and the curriculum |
+| `test_map_save_and_load` | A saved map loads with the same grid and matches the config | The map is built once and cached |
+
+---
+
+## `test_goal_env.py`
+
+Code under test: `src/slingpuck/general/goal_env.py`. Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_check_env` | Gymnasium `check_env` accepts `GoalEnv` | Stable-Baselines3 needs a correct env |
+| `test_paired_points_pair_each_point_with_its_target` | 16 points with 7 values each. The mean distance between the pairs equals `d_goal`. Each target point is its current point moved by the goal's rigid transform | Paired Point Encoding must pair the SAME object point with its target |
+| `test_goal_at_the_start_pose_counts_as_reached_and_chains_a_new_goal` | A goal at the start pose is reached on the first step, gives the success bonus, and the next goal is within the chain radius | Chained goals (Dex4D) |
+| `test_chained_goals_pass_the_reachable_goal_filter` | 10 chained goals all pass the filter | The policy must never train on goals it can never reach |
+| `test_random_tasks_are_seeded` | Two envs with the same seed give the same task and goal | Repeatable results |
+| `test_task_pool_is_used` | After `set_task_pool`, `reset()` starts a task from the pool | The curriculum controls the training tasks through the pool |
+| `test_student_points_are_masked_and_noisy` | In the student mode, masked points carry no position, and on average 20–90% of the points stay visible | The webcam student sees only part of the object |
+| `test_scripted_grasp_lifts_the_cube` | A scripted IK controller grasps the cube and lifts it above 6 cm, with both jaws in contact | The sim physics allows the grasp that the policy must learn |
+| `test_object_out_of_the_workspace_terminates` | An object pushed out of the workspace ends the episode with `failure: object_lost` | This is a logged failure stage |
+
+---
+
+## `test_paired_point_policy.py`
+
+Code under test: `src/slingpuck/general/policy.py`. Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_encoder_ignores_point_order_and_masked_points` | A shuffle of the points does not change the encoding. The values of masked points do not change it | The tracker gives points in any order, and some are hidden |
+| `test_actor_ignores_privileged_critic_uses_it` | After a short PPO run, a change to the privileged input does not change the actions but changes the value. Save and load give the same action | The deployed robot has no privileged state |
+
+---
+
+## `test_curriculum.py`
+
+Code under test: `src/slingpuck/general/failures.py`, `src/slingpuck/general/curriculum.py`. Needs `mujoco`.
+
+| Test | What it checks | Why |
+|---|---|---|
+| `test_records_round_trip` | Trial records survive a write and a read. The success rate is computed | Real and sim trials use this file format |
+| `test_bad_records_are_rejected` | An unknown stage or source raises `ValueError` | A typo in a real log must fail loudly |
+| `test_unreachable_goal_is_not_a_policy_failure` | A failure with a goal at 70 cm becomes `unreachable` and is not a policy failure. A reachable failure stays a policy failure | The synthesis: tag unreachable goals separately |
+| `test_rebuilt_task_starts_where_the_object_lay` | A rebuilt failure starts at the object's last pose on the table, with the failed goal. If the object was lifted, it starts at the original pose | real2sim: rebuild the failure in sim |
+| `test_candidates_are_reachable` | 40 sampled tasks all pass the filter | The curriculum never oversamples impossible tasks |
+| `test_failure_curriculum_oversamples_tasks_near_real_failures` | The `failure` mode samples tasks near a real failure more than twice as often as the `atr` mode | This is the method's main claim, in code |
+| `test_successes_and_unreachable_goals_do_not_steer_the_curriculum` | Success and unreachable records give no failure tasks | Only policy failures steer the curriculum |
+| `test_feasibility_follows_history_and_diversity_prefers_rare_tasks` | A task with a success history scores higher feasibility than one with failures. A task far from all trained tasks scores higher diversity | The two ATR terms |
+| `test_uniform_fraction_keeps_every_candidate_possible` | Scores are finite and the uniform fraction is above zero | ATR: 10% uniform sampling guards against collapse |
 
 ---
 

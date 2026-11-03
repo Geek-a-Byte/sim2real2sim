@@ -48,16 +48,33 @@ video generation as the planner, or unsupervised MI pre-training as a core part.
 
 Each milestone stops for review.
 
-| Milestone | Content |
-|---|---|
-| G1. Reachable-goal filter | One check: is an object goal pose achievable by the SO-101? (a) IK finds the grasp pose within the joint limits, with no collision. (b) The wrist roll and pitch are inside the 5-DoF range. (c) The gripper opens wide enough for the object. Precompute a reachability map (a voxel grid of feasible grasp orientations) so that the check is fast |
-| G2. Goal-conditioned sim env | MuJoCo env with objects, AP2AP goals that pass the filter, chained goals, staged reward. Include the sling puck skills as goals (PICK, SEAT, DRAW(aim, pull), BLOCK(x), HOLD), with a time penalty. The `slingpuck` branch uses them in its layer 1 |
-| G3. PPO teacher | Privileged teacher with paired-point goals and scene tokens. Needs a parallel sim (see the open questions) |
-| G4. Webcam student | DAgger distillation with masked, noisy points from one RGB camera. 3-D scale from the known object size |
-| G5. Task from a human demo | Human video → CoTracker3 point tracks → a rigid transform per step → a goal sequence, through the filter |
-| G6. Deploy and log failures | Zero-shot on the SO-101 with online point tracking. Go to the next goal when the point error is below a threshold. Log each trial: goal step, grasp, transport or place, object pose. Log unreachable goals separately |
-| G7. Real2sim curriculum | Rebuild each failure as a scene graph, make variations, score them (feasibility + diversity + closeness to real failures, reachable tasks only), and train again |
-| G8. (Optional) Real residual | A small real residual on one demo task for last-centimeter contact errors |
+| Milestone | Content | Status |
+|---|---|---|
+| G1. Reachable-goal filter | One check: is an object goal pose achievable by the SO-101? (a) IK finds the grasp pose within the joint limits, with no collision. (b) The approach is one that a 5-DoF arm can give. (c) The gripper opens wide enough for the object. A precomputed reachability map makes the check fast | **Done:** `general/reachability.py` |
+| G2. Goal-conditioned sim env | MuJoCo env with objects, AP2AP goals that pass the filter, chained goals, staged reward. Include the sling puck skills as goals (PICK, SEAT, DRAW(aim, pull), BLOCK(x), HOLD), with a time penalty. The `slingpuck` branch uses them in its layer 1 | **Done for AP2AP** (cube, bar, tube, puck): `general/goal_env.py`. The sling puck skill goals (SEAT, DRAW, BLOCK) are not in it yet |
+| G3. PPO teacher | Privileged teacher with paired-point goals and scene tokens | **Code done, not trained:** `general/policy.py`, `general/train_teacher.py`. No scene tokens yet. Needs long runs (see the open questions) |
+| G4. Webcam student | DAgger distillation with masked, noisy points from one RGB camera. 3-D scale from the known object size | The student observation (masked, noisy points) is in the env. DAgger is not written |
+| G5. Task from a human demo | Human video → CoTracker3 point tracks → a rigid transform per step → a goal sequence, through the filter | Not started |
+| G6. Deploy and log failures | Zero-shot on the SO-101 with online point tracking. Go to the next goal when the point error is below a threshold. Log each trial: goal step, grasp, transport or place, object pose. Log unreachable goals separately | **Trial log done** (same format for sim and real): `general/failures.py`, `general/evaluate.py`. The real robot interface and the online tracker are not written |
+| G7. Real2sim curriculum | Rebuild each failure, make variations, score them (feasibility + diversity + closeness to real failures, reachable tasks only), and train again | **Done:** `general/curriculum.py` (modes `uniform`, `atr`, `failure`). Feasibility is a k-NN success estimate, not a learned value |
+| G8. (Optional) Real residual | A small real residual on one demo task for last-centimeter contact errors | Not started |
+
+## How to run (G1, G2, G3, G6, G7)
+
+```bash
+python -m src.slingpuck.general.reachability                      # build cache/reach_map.npz (a few minutes, once)
+python -m src.slingpuck.general.train_teacher --curriculum uniform --timesteps 2000000      # (A)
+python -m src.slingpuck.general.train_teacher --curriculum atr --timesteps 2000000          # (B)
+python -m src.slingpuck.general.evaluate --model logs/general/<run>/final_model.zip --episodes 100
+python -m src.slingpuck.general.train_teacher --curriculum failure \
+    --failures results/general/real_trials.jsonl --resume logs/general/<run>/final_model.zip  # (C), next round
+```
+
+**The real2sim loop:** run the policy on a task (real or sim), write one trial record per trial
+(`general/failures.py`, one JSON line each), and give the file to `--failures`. The curriculum rebuilds
+each policy failure in sim (start where the object lay, the goal that failed), makes variations near
+it, and samples training tasks near the failures more often. Unreachable goals are tagged and do not
+count as policy failures.
 
 ## Experiments
 
