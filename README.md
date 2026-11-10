@@ -602,6 +602,57 @@ strategy matters only in a narrow band, where the robot's sling rate is close to
 With the measured robot and human times, the selector can face a real trade-off between BLOCK and SLING, and the
 privileged critic can learn from the opponent's hidden state.
 
+### Failure logs for retraining
+
+Real failure logs do not train the PPO selector directly. About 50 real shots are too few for RL on real data,
+but they are enough to fit the 10 or so sim values that the selector depends on. Thus the real failures go into
+the sim first (the real2sim layer in [docs/PLAN.md](docs/PLAN.md)):
+
+1. Log the real shots and skills (the logs below).
+2. Fit the sim values from the logs. Write `configs/physics_params_v1.yaml` and the measured times in
+   `configs/env.yaml`.
+3. Fit the shot model again on the calibrated sim (`python -m src.slingpuck.shot.model`).
+4. Train the PPO selector again in the calibrated sim (3 seeds) and compare it with the greedy rule.
+
+| Log | Failures it catches | Values it sets | Effect on the RL selector |
+|---|---|---|---|
+| **1. Shot log** (S4, the most important) | `weak`, `edge`, `miss` (the same labels as `physics/shot_sim.py`) | Band stiffness and natural length (exit speed against pull), puck friction (the slow-down), release bias and noise (`shot.release_*`, from exit x and exit angle), wall restitution | P(through) in `MatchEnv`. Now the model gives about 0.9 where the sim arm gets 66–82 of 100 |
+| **2. Skill log** | Missed grasp, slip in the draw, puck not in the band, push-out fails, puck knocked away, `Stalled` | `gripper.jaw_friction`, `gripper.grip_torque_nm`, `skills.speed_scale`, the skill scripts | Success rate of each skill. The plan sends skill failures to the `generalized` pipeline, not to RL |
+| **3. Timing log** | Slow cycles | Pick time, arm and draw speeds, `free_puck_s`, `open_time_s`, block time | **The largest effect.** With the placeholder times PPO learns "always sling". The measured times decide if blocking pays |
+| **4. Camera log** | Missed pucks, false pucks, track ID changes, delay | `match.puck_track_noise_m`, `camera.latency_s` | Noise and delay on the 22 values that the actor sees |
+| **5. Match log** (S5, S6) | Lost matches, a shot let through during a sling, a block that missed | Opponent profiles: shot rate, accuracy, reload time | The opponent in `MatchEnv`, and a sim-to-real check on the same observations |
+
+One shot record (the proposed format):
+
+```yaml
+shot_id: 2026-11-12_143005_07
+command:   {launch_x_m: -0.005, aim_rad: 0.0, pull_m: 0.015, speed_scale: 0.25}
+puck:      {start_xy_m: [0.031, -0.074], seat_xy_m: [-0.005, -0.112], colour: black}
+model:     {p_through: 0.92, T_s: 1.60, sim_outcome: through}       # the prediction before the shot
+skills:    {free: ok, grasp: ok, seat: ok, draw: ok, release: ok}   # or the first failure and its phase
+joints:    replay log (t, phase, cmd, meas, load), stall reason if any
+times_s:   {free: 0.0, pick: 2.1, seat: 1.4, draw: 0.9, release: 0.06}
+track:     camera at 120 fps from the release until the puck stops or goes through (t, x, y)
+result:    {outcome: edge, exit_speed_m_s: 0.71, exit_x_m: -0.0038, exit_angle_rad: 0.021, divider_x_m: 0.016}
+```
+
+Rules for the logs:
+
+- **Log every shot, not only the failures.** A fit on the misses only gives biased values. The failure is a label
+  on a shot, not a separate data set.
+- **Record the sim prediction before each shot.** The S4 result is P(through) in sim against real, before and
+  after the calibration.
+- **Label the first failure and its phase.** A grasp failure is not a shot failure, so it must not go into the
+  physics fit.
+- **Spread the shots over the shot space.** Use a grid over pull and launch x, plus more shots near the real
+  misses. Do not use greedy shots only: greedy picks almost the same shot each time.
+
+**What exists:** `deploy/replay_trajectory.py` logs the joints, loads and stall reason per phase.
+`deploy/record_trajectory.py` saves the command and the sim outcome in `meta.yaml`. `sensing/` gives the puck
+positions. **What is missing:** the real outcome label, a 120 fps puck track after the release, the exit speed
+and angle, the phase times on the real arm, a shot logger (`deploy/log_shot.py`, planned), and a fit script that
+writes `physics_params_v1.yaml`.
+
 ### RL on the other branches
 
 | Branch | RL use |
@@ -705,7 +756,8 @@ In priority order:
 4. **Measure the placeholder values:** arm fetch, sling and move times, puck mass, friction, band values, camera
    latency, and the scoring rules. Write `physics_params_v1.yaml`.
 5. **S4, physics calibration:** record 40–60 real shots with camera tracks (a 120 fps camera is necessary), fit
-   band stiffness, friction and release noise, and fit the shot model again, on real arm shots.
+   band stiffness, friction and release noise, and fit the shot model again, on real arm shots. The logs and the
+   record format are in [Failure logs for retraining](#failure-logs-for-retraining).
 6. **Find the cause of the match timeouts** in `mujoco_match_eval.py`.
 7. **Train the PPO selector again (M5)** with the measured times, 3 seeds, and compare it with the greedy rule and
    the baselines on paired seeds. Export the actor of the asymmetric policy to ONNX.
