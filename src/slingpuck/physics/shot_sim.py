@@ -2,8 +2,8 @@
 
 A shot is (launch_x, aim, pull) in the board frame: the puck sits on the agent band at x = launch_x, and
 the robot draws it back by `pull` in the direction `aim` (rad from straight back, + toward +x). The band
-releases it (physics/band_model.py), release noise is added (shot.release_* in env.yaml, to be
-calibrated in S4), and the puck slides in a board-only MuJoCo scene (walls, divider, gate corners, Coulomb
+releases it (physics/band_model.py), the jaws' measured effect and the release noise are added
+(shot.release_* in env.yaml, to be calibrated in S4), and the puck slides in a board-only MuJoCo scene (walls, divider, gate corners, Coulomb
 friction, the configured restitution) until it goes through the gate, stops, or bounces back.
 
 Outcome:
@@ -20,7 +20,7 @@ import mujoco
 import numpy as np
 
 from src.slingpuck.physics.band_model import GRAVITY, BandModel
-from src.slingpuck.so101_slingpuck import WALL_PAIRS, add_board, contact_params
+from src.slingpuck.so101_slingpuck import WALL_PAIRS, add_board, contact_params, coulomb_along_velocity
 
 OUTCOMES = ("through", "weak", "edge", "miss")
 
@@ -66,6 +66,8 @@ class ShotSim:
             spec.add_pair(geomname1="puck_col", geomname2=wall, condim=1, solref=solref, solimp=solimp)
         self.m = spec.compile()
         self.d = mujoco.MjData(self.m)
+        self.friction_n = friction
+        self._dofs = [self.m.joint(f"puck_{a}").dofadr[0] for a in "xy"]
 
     def pull_point(self, launch_x: float, aim: float, pull: float) -> np.ndarray:
         return np.array([launch_x + pull * np.sin(aim), self.band.band_y - pull * np.cos(aim)])
@@ -76,13 +78,15 @@ class ShotSim:
         if not rel.launched:
             return ShotResult("weak", 0.0, None, 0.0)
         pos, vel = rel.exit_pos.copy(), rel.exit_vel.copy()
+        n = self.noise
+        dx, a, k = n["release_x_bias_m"], n["release_angle_bias_rad"], n["release_speed_factor"]
         if rng is not None:                       # Release noise
-            n = self.noise
-            pos[0] += rng.normal(0, n["release_x_std_m"])
-            a = rng.normal(0, n["release_angle_std_rad"])
-            c, s = np.cos(a), np.sin(a)
-            vel = np.array([c * vel[0] - s * vel[1], s * vel[0] + c * vel[1]])
-            vel *= max(0.0, 1.0 + rng.normal(0, n["release_speed_std_frac"]))
+            dx += rng.normal(0, n["release_x_std_m"])
+            a += rng.normal(0, n["release_angle_std_rad"])
+            k *= max(0.0, 1.0 + rng.normal(0, n["release_speed_std_frac"]))
+        pos[0] += dx
+        c, s = np.cos(a), np.sin(a)               # + a turns the exit direction toward +x
+        vel = k * np.array([c * vel[0] + s * vel[1], -s * vel[0] + c * vel[1]])
         exit_speed = float(np.linalg.norm(vel))
 
         mujoco.mj_resetData(self.m, self.d)
@@ -91,7 +95,9 @@ class ShotSim:
         face = -(self.half_t + self.r)            # Puck center when it touches the divider (agent side)
         divider_x, t = None, 0.0
         while t < max_t:
-            mujoco.mj_step(self.m, self.d, nstep=10)
+            for _ in range(10):
+                coulomb_along_velocity(self.m, self.d, self._dofs, self.friction_n)
+                mujoco.mj_step(self.m, self.d)
             t = self.d.time
             x, y = self.d.qpos[0], self.d.qpos[1]
             vy = self.d.qvel[1]

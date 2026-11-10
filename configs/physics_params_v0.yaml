@@ -16,9 +16,10 @@ board:
   outer_height_m: 0.0249     # [spec] 0.98 in ("tabletop thickness 2.5 cm" = same value)
   board_mass_kg: 0.360       # [spec] 360 g; not used by sim (board is fixed)
   wall_thickness_m: 0.01524  # [image] 0.6 in frame width. TODO: measure on size M
-  length_m: 0.3353           # [derived] inner play length = 14.4 - 2*0.6 in
-  width_m: 0.1854            # [derived] inner play width = 8.5 - 2*0.6 in
-  divider_thickness_m: 0.010 # TODO: measure center divider thickness
+  length_m: 0.330            # [user] measured 2026-11-05: inner play length, end wall to end wall (was 0.3353 derived)
+  width_m: 0.203             # [user] measured 2026-11-05: inner play width, wall to wall (was 0.1854 derived)
+                             # NOTE: with the [spec] outer sizes, the walls would be 6.5 mm (sides) and 17.9 mm (ends) thick
+  divider_thickness_m: 0.007 # [user] measured 2026-11-05 (was 10 mm placeholder)
   wall_height_m: 0.015       # TODO: measure wall/divider height above the play surface (MuJoCo only)
   gate_width_m: 0.034        # [user] measured 3.4 cm (4.3 mm clearance per side for the 1 in puck)
   restitution: 0.85          # TODO: measure (puck on wood wall; MuJoCo uses it for all puck contacts)
@@ -39,8 +40,8 @@ band:
   # length - natural length. Unloading follows a lower curve that meets the
   # loading curve at both ends (closed hysteresis loop), and loses
   # hysteresis_loss_factor of the loading work.
-  anchor_span_m: 0.1854      # [derived] = inner width; assumes pegs at the side walls. TODO: measure peg spacing
-  band_offset_from_end_wall_m: 0.05 # TODO: measure (band line to agent end wall)
+  anchor_span_m: 0.203       # [user] 2026-11-05: the band goes into the side walls, so the span = the inner width
+  band_offset_from_end_wall_m: 0.05 # [user] measured 2026-11-05 (band line to agent end wall)
   natural_length_m: 0.150    # TODO: measure with a band bench test (sets the pre-tension, ~7 N here)
   stiffness_k_n_m: 200.0     # TODO: measure with a band bench test
   stiffness_exponent: 1.0    # TODO: measure (1 = linear; > 1 stiffens with stretch)
@@ -51,18 +52,19 @@ robot:
   # SO-101 mounting, in the board frame. The robot and the board stand on the same table.
   base_xy_m: [0.0, -0.2177]  # TODO: measure pan-axis position. Placeholder: 5 cm behind the agent end wall
 
+gripper:
+  jaw_friction: 0.5          # TODO: measure (jaw tip on puck; bare printed jaws are lower, rubber tips higher)
+  grip_torque_nm: 1.47       # TODO: measure. 50% of the 2.94 Nm servo limit (the LeRobot torque cap in the Task 1 report)
+
 camera:
   latency_s: 0.05            # TODO: measure (glass-to-tracker latency)
 
 placeholders:
   - board.wall_thickness_m
-  - board.divider_thickness_m
   - board.restitution
   - puck.radius_m
   - puck.thickness_m
   - puck.friction_kinetic
-  - band.anchor_span_m
-  - band.band_offset_from_end_wall_m
   - band.natural_length_m
   - band.stiffness_k_n_m
   - band.stiffness_exponent
@@ -71,3 +73,5 @@ placeholders:
   - robot.base_xy_m
   - board.wall_height_m
   - camera.latency_s
+  - gripper.jaw_friction
+  - gripper.grip_torque_nm

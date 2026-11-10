@@ -1,0 +1,137 @@
+# Real board relative to the real arm. Written by touch_test.py; surface height corrected by vertical_stop.py (torque on).
+meta:
+  date: '2026-11-05T18:19:25'
+  robot_id: group5
+  divider_thickness_m: 0.007
+  joint_map: configs/real_arm_joint_map.yaml
+  lerobot_calibration_sha256: c18be0628254f3e28cf96d31f28ddb4c95e540887da406a1382da7b8fcc94985
+  zeros_fitted: true
+  fit_joints:
+  - shoulder_pan
+  - shoulder_lift
+  - elbow_flex
+  refit_date: '2026-11-05T18:28:27'
+  surface_from_vertical_stop:
+    file: results/real/vertical_stop_20261105_184810.yaml
+    contacts_mm:
+    - 7.2
+    - 13.0
+    - 7.8
+    - 7.0
+    median_mm: 7.5
+    touch_test_surface_z_m: 0.0118
+robot:
+  base_xy_m:
+  - 0.0025
+  - -0.2264
+board:
+  surface_z_m: 0.0193
+fit:
+  yaw_deg: -0.03
+  offset_m:
+  - 0.2653
+  - 0.0024
+  rms_mm: 7.67
+marks:
+  near_left:
+    board_xy_m:
+    - -0.06
+    - -0.0235
+    tip_robot_m:
+    - 0.2443
+    - 0.0642
+    - 0.0114
+    error_mm: 3.0
+    z_error_mm: -0.4
+    reading:
+      shoulder_pan: -15.78
+      shoulder_lift: 15.692
+      elbow_flex: 13.319
+      wrist_flex: 66.505
+      wrist_roll: -84.527
+      gripper: 2.785
+  near_right:
+    board_xy_m:
+    - 0.06
+    - -0.0235
+    tip_robot_m:
+    - 0.2435
+    - -0.0633
+    - 0.0106
+    error_mm: 6.0
+    z_error_mm: -1.2
+    reading:
+      shoulder_pan: 18.769
+      shoulder_lift: 15.692
+      elbow_flex: 13.67
+      wrist_flex: 66.418
+      wrist_roll: -84.527
+      gripper: 2.785
+  mid_center:
+    board_xy_m:
+    - 0.0
+    - -0.0635
+    tip_robot_m:
+    - 0.1981
+    - 0.0012
+    - 0.013
+    error_mm: 3.9
+    z_error_mm: 1.1
+    reading:
+      shoulder_pan: 1.714
+      shoulder_lift: -13.934
+      elbow_flex: 48.747
+      wrist_flex: 58.242
+      wrist_roll: -85.143
+      gripper: 2.785
+  far_left:
+    board_xy_m:
+    - -0.06
+    - -0.0835
+    tip_robot_m:
+    - 0.1859
+    - 0.0621
+    - 0.0143
+    error_mm: 4.1
+    z_error_mm: 2.5
+    reading:
+      shoulder_pan: -20.747
+      shoulder_lift: -14.563
+      elbow_flex: 48.747
+      wrist_flex: 58.505
+      wrist_roll: -85.143
+      gripper: 2.785
+  far_right:
+    board_xy_m:
+    - 0.06
+    - -0.0835
+    tip_robot_m:
+    - 0.1895
+    - -0.05
+    - 0.0127
+    error_mm: 10.8
+    z_error_mm: 0.9
+    reading:
+      shoulder_pan: 20.527
+      shoulder_lift: -13.758
+      elbow_flex: 48.659
+      wrist_flex: 58.418
+      wrist_roll: -84.527
+      gripper: 2.785
+  far_center:
+    board_xy_m:
+    - 0.0
+    - -0.1335
+    tip_robot_m:
+    - 0.1193
+    - 0.0006
+    - 0.009
+    error_mm: 12.6
+    z_error_mm: -2.8
+    reading:
+      shoulder_pan: 4.0
+      shoulder_lift: -54.813
+      elbow_flex: 77.758
+      wrist_flex: 74.769
+      wrist_roll: -85.143
+      gripper: 2.785

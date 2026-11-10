@@ -23,13 +23,14 @@ def write_calibrated(cfg_dir, n):
 def test_v0_loads_and_lists_placeholders(cfg):
     assert cfg["meta"]["params_version"] == "v0"
     assert cfg["meta"]["calibrated"] is False
-    assert "board.divider_thickness_m" in cfg["meta"]["placeholders"]
-    assert "board.gate_width_m" not in cfg["meta"]["placeholders"]  # Measured by the user
+    assert "board.wall_height_m" in cfg["meta"]["placeholders"]
+    for measured in ("board.gate_width_m", "board.divider_thickness_m", "band.band_offset_from_end_wall_m"):
+        assert measured not in cfg["meta"]["placeholders"]  # Measured by the user
     assert cfg["match"]["pucks_per_side"] == 5   # env.yaml is merged in
 
 
 def test_strict_rejects_placeholders():
-    with pytest.raises(ConfigError, match="board.divider_thickness_m"):
+    with pytest.raises(ConfigError, match="board.wall_height_m"):
         load_config("v0", strict=True)
 
 

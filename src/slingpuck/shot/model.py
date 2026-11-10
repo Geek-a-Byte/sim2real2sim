@@ -23,7 +23,8 @@ import numpy as np
 from src.slingpuck.config import REPO_ROOT
 
 FINGERPRINT_KEYS = ("board", "puck", "band")
-NOISE_KEYS = ("release_x_std_m", "release_angle_std_rad", "release_speed_std_frac")
+NOISE_KEYS = ("release_x_std_m", "release_angle_std_rad", "release_speed_std_frac", "release_speed_factor",
+              "release_x_bias_m", "release_angle_bias_rad")
 
 
 def fingerprint(cfg: dict) -> str:

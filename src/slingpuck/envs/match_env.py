@@ -42,7 +42,7 @@ BLOCK, SLING, WAIT = 0, 1, 2
 ACTION_NAMES = ("block", "sling", "wait")
 ARM_STATES = ("gate", "to_band", "slinging", "at_band", "to_gate")
 OBS_CLIP = 5.0
-RACK_Y, RACK_PITCH = 0.07, 0.03      # Start positions of the agent pucks: a row at |y| = 7 cm (as so101_slingpuck)
+RACK_Y = 0.07      # Start positions of the agent pucks: a row at |y| = 7 cm (as so101_slingpuck)
 SHOT_TIME_SCALE = 3.0                # shot_time observation = T / 3 s
 
 
@@ -95,7 +95,7 @@ class MatchEnv(gym.Env):
             cfg = {**cfg, "opponent": {**cfg["opponent"], "tell_strength": float(options["tell_strength"])}}
         self.opponent = Opponent(cfg, self.np_random)
         n = self.m["pucks_per_side"]
-        self.agent_pucks = [np.array([(i - (n - 1) / 2) * RACK_PITCH, -RACK_Y]) for i in range(n)]
+        self.agent_pucks = [np.array([(i - (n - 1) / 2) * 2.0 * self.r, -RACK_Y]) for i in range(n)]
         self.opp_side = n
         self.t = 0.0
         self.steps = 0

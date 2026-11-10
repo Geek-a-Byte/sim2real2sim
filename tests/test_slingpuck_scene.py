@@ -52,13 +52,18 @@ def test_wall_bounce_keeps_the_configured_restitution(cfg, scene):
     mujoco.mj_resetDataKeyframe(m, d, 0)
     a = m.joint("puck_a4_x").dofadr[0]   # Outermost puck in the row, heading for the side wall
     d.qvel[a] = 1.5
+    col, wall = m.geom("puck_a4_col").id, m.geom("wall_right").id
+
+    def at_wall():
+        return any({d.contact[k].geom1, d.contact[k].geom2} == {col, wall} for k in range(d.ncon))
+
     v_in = None
     for _ in range(int(0.2 / m.opt.timestep)):
         before = d.qvel[a]
         mujoco.mj_step(m, d)
-        if v_in is None and d.ncon:
+        if v_in is None and at_wall():
             v_in = before
-        if v_in is not None and d.ncon == 0 and d.qvel[a] < 0:
+        if v_in is not None and not at_wall() and d.qvel[a] < 0:
             break
     assert -d.qvel[a] / v_in == pytest.approx(cfg["board"]["restitution"], abs=0.03)
 

@@ -6,7 +6,8 @@ fixed    the old black box: move_gate_to_band_s (if the arm starts at the gate),
          sling_core_s, then the puck flies sling_flight_s and goes through with sling_success_prob.
 greedy   layer 2 of the adaptation plan. For every puck on the agent half and every candidate shot
          (launch x, aim, pull) on a grid, the shot model gives P(through), and the time is
-             T = pick_time + (|arm -> puck| + |puck -> seat|) / arm_speed + seat_release + pull / draw_speed.
+             T = pick_time + (|arm -> puck| + |puck -> seat|) / arm_speed + seat_release + pull / draw_speed,
+         plus free_puck_s if another puck leaves no room for the open jaws (the arm first pushes the puck out).
          Choose the puck and shot with the highest (P + ucb_beta * std) / T. Pucks jammed against a side
          wall go last.
 random   a random puck (the "random puck order" baseline), with the most likely shot.
@@ -71,6 +72,13 @@ class ShotSelector:
         carry = np.linalg.norm(np.asarray(puck_xy) - from_xy) + np.linalg.norm(self.seats - puck_xy, axis=1)
         return s["pick_time_s"] + carry / s["arm_speed_m_s"] + s["seat_release_s"] + self.draw_s
 
+    def free_times(self, pucks_xy) -> np.ndarray:
+        """Extra time per puck: free_puck_s if a neighbour leaves no room for the open jaws."""
+        d = np.abs(pucks_xy[:, None] - pucks_xy[None])
+        near = (d[..., 0] < self.s["jaw_room_x_m"]) & (d[..., 1] < self.s["jaw_room_y_m"])
+        np.fill_diagonal(near, False)
+        return near.any(1) * self.s["free_puck_s"]
+
     def jammed(self, puck_xy) -> bool:
         return abs(puck_xy[0]) > self.wall_x - self.s["jam_margin_m"]
 
@@ -79,12 +87,13 @@ class ShotSelector:
             return None
         pucks_xy, from_xy = np.asarray(pucks_xy, float), np.asarray(from_xy, float)
         free = [i for i in range(len(pucks_xy)) if not self.jammed(pucks_xy[i])] or list(range(len(pucks_xy)))
+        extra = self.free_times(pucks_xy)
         if self.mode == "random" and rng is not None:
             i = int(free[int(rng.integers(len(free)))])
             k = int(np.argmax(self.p))
-            t = self.times(pucks_xy[i], from_xy)[k]
+            t = self.times(pucks_xy[i], from_xy)[k] + extra[i]
         else:
-            T = np.array([self.times(pucks_xy[i], from_xy) for i in free])        # (n_free, n_shots)
+            T = np.array([self.times(pucks_xy[i], from_xy) + extra[i] for i in free])    # (n_free, n_shots)
             v = self.score_p[None] / T
             a, k = np.unravel_index(int(np.argmax(v)), v.shape)
             i, t = int(free[a]), float(T[a, k])

@@ -43,11 +43,25 @@ def _pan_anchor_local() -> np.ndarray:
 BASE_AXIS_X = float(_pan_anchor_local()[0])   # the arm's turning axis is 3.88 cm in front of the base origin
 PUCKS_PER_SIDE = 5
 RACK_Y = 0.07                              # Board y of the puck rows on each half (|y|, m), clear of the band
-RACK_PITCH = 0.03                          # Puck spacing in a row, m (puck diameter 2.54 cm)
 HOME = [1.319, -0.862, 0.582, 1.658, -0.301, 0.268]  # start pose (rad): gripper over the agent-right corner, jaws open
 BAND_RGBA = [0.80, 0.12, 0.10, 1]
 PUCK_RGBA = {"a": [0.06, 0.06, 0.06, 1],    # Robot (agent) pucks: black
              "o": [0.96, 0.96, 0.94, 1]}    # Human (opponent) pucks: white
+
+
+def coulomb_along_velocity(model, data, dofs: list, limit: float):
+    """Set the friction of a planar puck's two slide joints from its velocity, once per step.
+
+    MuJoCo's joint friction acts per axis: a puck with a small sideways speed lost it in milliseconds, so it
+    kept going straight whatever its direction. Sharing the limit by the velocity makes the friction act
+    against the velocity, so the direction stays. At rest each axis has the full limit (it holds the puck)."""
+    vx, vy = data.qvel[dofs[0]], data.qvel[dofs[1]]
+    speed = math.hypot(vx, vy)
+    if speed < 1e-4:
+        model.dof_frictionloss[dofs] = limit
+    else:
+        model.dof_frictionloss[dofs[0]] = limit * abs(vx) / speed
+        model.dof_frictionloss[dofs[1]] = limit * abs(vy) / speed
 
 
 def _divider_boxes(cfg):
@@ -156,7 +170,7 @@ def build(cfg: dict):
         for i in range(PUCKS_PER_SIDE):
             name = f"puck_{side}{i}"
             names.append(name)
-            x = (i - (PUCKS_PER_SIDE - 1) / 2) * RACK_PITCH
+            x = (i - (PUCKS_PER_SIDE - 1) / 2) * 2.0 * r     # Start row: the pucks touch (user, real game)
             b = board.add_body(name=name, pos=[x, sy * RACK_Y, z_mid])
             for jn, jt, axis in (("x", "SLIDE", (1, 0, 0)), ("y", "SLIDE", (0, 1, 0)), ("yaw", "HINGE", (0, 0, 1))):
                 b.add_joint(name=f"{name}_{jn}", type=getattr(mujoco.mjtJoint, f"mjJNT_{jt}"), axis=list(axis),

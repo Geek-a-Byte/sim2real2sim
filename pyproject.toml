@@ -24,6 +24,9 @@ dependencies = [
 dev = [
     "pytest>=7.0.0"
 ]
+vision = [
+    "opencv-python>=4.8"   # Overhead camera: src/slingpuck/sensing/ (from python-opencv-messaround)
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

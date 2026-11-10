@@ -20,7 +20,7 @@ def sim(greedy_cfg):
 # ------------------------------------------------------------------- shot simulator
 def test_straight_center_shot_goes_through(sim):
     r = sim.shoot(0.0, 0.0, 0.02)
-    assert r.through and r.exit_speed > 0.5 and abs(r.divider_x) < 1e-3
+    assert r.through and r.exit_speed > 0.5 and abs(r.divider_x) < 4e-3
 
 
 def test_off_center_shot_hits_the_divider(sim):
@@ -36,7 +36,23 @@ def test_small_pull_is_weak(sim):
 def test_angled_pull_still_launches_almost_straight(sim):
     """Pre-stretched band: a 0.3 rad pull moves the puck only a few mm at the divider."""
     r = sim.shoot(0.0, 0.3, 0.02)
-    assert r.through and abs(r.divider_x) < 0.008
+    assert r.exit_speed > 0.5 and abs(r.divider_x) < 0.008
+
+
+def test_release_applies_the_measured_jaw_effect(greedy_cfg):
+    s = greedy_cfg["shot"]
+    ideal_cfg = copy.deepcopy(greedy_cfg)
+    ideal_cfg["shot"].update(release_speed_factor=1.0, release_x_bias_m=0.0, release_angle_bias_rad=0.0)
+    real, ideal = ShotSim(greedy_cfg).shoot(0.0, 0.0, 0.025), ShotSim(ideal_cfg).shoot(0.0, 0.0, 0.025)
+    assert real.exit_speed == pytest.approx(s["release_speed_factor"] * ideal.exit_speed, rel=1e-6)
+    assert real.divider_x > ideal.divider_x + s["release_x_bias_m"] * 0.9     # Bias in x and the angle toward +x
+
+
+def test_a_puck_keeps_its_direction_under_friction(greedy_cfg):
+    c = copy.deepcopy(greedy_cfg)
+    c["shot"].update(release_speed_factor=1.0, release_x_bias_m=0.0, release_angle_bias_rad=0.03)
+    r = ShotSim(c).shoot(0.0, 0.0, 0.025)
+    assert r.divider_x == pytest.approx(0.03 * 0.1, abs=5e-4)       # 3 cm/m over the 10 cm from band to divider
 
 
 def test_release_noise_is_seeded(sim):
@@ -92,6 +108,13 @@ def test_random_selection_varies_the_puck(greedy_cfg, shot_model):
     pucks = [np.array([x, -0.07]) for x in (-0.06, -0.03, 0.0, 0.03, 0.06)]
     rng = np.random.default_rng(0)
     assert len({sel.choose(pucks, (0.0, sel.band_y), rng).index for _ in range(40)}) >= 4
+
+
+def test_a_puck_in_a_row_costs_the_push_out_time(greedy_cfg, shot_model):
+    sel = ShotSelector(greedy_cfg, shot_model)
+    d = 2 * greedy_cfg["puck"]["radius_m"]
+    pucks = np.array([[0.0, -0.07], [d, -0.07], [0.08, -0.07]])
+    np.testing.assert_allclose(sel.free_times(pucks), [greedy_cfg["shot"]["free_puck_s"]] * 2 + [0.0])
 
 
 # --------------------------------------------------------------- match env (greedy)

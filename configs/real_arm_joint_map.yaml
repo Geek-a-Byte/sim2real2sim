@@ -1,0 +1,45 @@
+# Real SO-101 joint map. Written by: python -m src.slingpuck.deploy.calibrate_joints
+# sim -> real: q_real_deg = zero_deg + sign * degrees(q_sim_rad)
+# Run the script again after each lerobot-calibrate (the LeRobot zero moves).
+meta:
+  robot_id: group5
+  port: /dev/tty.usbmodem5A7A0563651
+  date: '2026-11-05T17:36:48'
+  steps:
+  - gripper
+  - sign
+  - zero
+  lerobot_calibration_file: /Users/naziashehnazjoynab/.cache/huggingface/lerobot/calibration/robots/so_follower/group5.json
+  lerobot_calibration_sha256: c18be0628254f3e28cf96d31f28ddb4c95e540887da406a1382da7b8fcc94985
+  ref_rad:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  pan_zero_moved_by_fix_ranges_deg: 2.286
+  pan_zero_from_touch_yaw_deg: 5.957
+  touch_fit:
+    date: '2026-11-05T18:19:25'
+    rms_mm: 7.67
+    left_out_rms_mm: 10.53
+arm:
+  shoulder_pan:
+    zero_deg: -0.141
+    sign: 1
+  shoulder_lift:
+    zero_deg: 1.296
+    sign: 1
+  elbow_flex:
+    zero_deg: 5.649
+    sign: 1
+  wrist_flex:
+    zero_deg: -0.484
+    sign: 1
+  wrist_roll:
+    zero_deg: 4.527
+    sign: 1
+gripper:
+  closed: 2.72
+  open: 98.42
+  span_deg: 132.93
